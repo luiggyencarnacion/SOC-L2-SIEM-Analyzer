@@ -1,6 +1,6 @@
 # PROGRESS.md — Estado del proyecto
 
-Última actualización: fase C implementada (correlación, incidentes, scoring y override; fases 0, A, B1 y B2 cerradas).
+Última actualización: fase D implementada (dashboard interactivo; fases 0, A, B1, B2 y C cerradas).
 
 ## Estado por fase
 
@@ -10,8 +10,8 @@
 | A | 🔶 implementada — Pendiente: verificación manual del desarrollador | Ingesta + hojas + mapeo + normalización + alias + calidad + tabla. Backend FastAPI, frontend React con subida → mapeo → tabla. |
 | B1 | ✅ implementada — Pendiente: verificación manual del desarrollador | Reglas AUTH-001–005, AUTH-007, PRIV-001/002, EXEC-001–007, PERS-001–003. Motor determinista en `backend/app/detection/` con YAML configurable (`detection/rules/default_rules.yaml`), hallazgos con evidencia por `Log_ID`, afirmaciones Hecho/Inferencia/Hipótesis, cobertura por regla. Absorción AUTH-001→AUTH-002 funcionando (spray del ejemplo: 33 fallos absorbidos, 0 hallazgos AUTH-001). |
 | B2 | ✅ implementada — Pendiente: verificación manual del desarrollador | Reglas LAT-001–004, EXF-001–004, WEB-001–003. LAT-001 anclado a acceso externo (validado con EVT-00188→EVT-00222/225/227/231), LAT-003 exige ≥2 saltos (1 salto → sin hallazgo), LAT-004 `insufficient_data` documentado (requiere línea base, fase H). Endpoints `GET /findings`, `GET /coverage`, `GET /detection/rules`. Frontend: panel de hallazgos (evidencia clickeable que filtra la tabla) y panel de cobertura. |
-| C | 🔶 implementada — Pendiente: verificación manual del desarrollador | Correlación, incidentes, scoring y override. Módulo `backend/app/correlation/` (config YAML + scoring + correlador). El Excel de ejemplo produce **6 cadenas** (I-001..I-006, PLAN §14), relaciones "mismo activo", timeline/IoCs/MITRE/kill chain solo observadas, scoring con invariantes del PLAN 7 y override manual con motivo obligatorio. Endpoints `GET /api/sessions/{id}/incidents` y `POST /api/sessions/{id}/overrides`. Frontend: `IncidentsPanel` con override desde la UI y badge de score/override en hallazgos. |
-| D | pendiente | Dashboard interactivo. |
+| C | ✅ implementada — Pendiente: verificación manual del desarrollador | Correlación, incidentes, scoring y override. Módulo `backend/app/correlation/` (config YAML + scoring + correlador). El Excel de ejemplo produce **6 cadenas** (I-001..I-006, PLAN §14), relaciones "mismo activo", timeline/IoCs/MITRE/kill chain solo observadas, scoring con invariantes del PLAN 7 y override manual con motivo obligatorio. Endpoints `GET /api/sessions/{id}/incidents` y `POST /api/sessions/{id}/overrides`. Frontend: `IncidentsPanel` con override desde la UI y badge de score/override en hallazgos. |
+| D | 🔶 implementada — Pendiente: verificación manual del desarrollador | Dashboard interactivo. Endpoint `GET /api/sessions/{id}/stats` con agregados deterministas (KPIs, timeline por horas/días, tops, SIEM vs calculada, heatmap, MITRE) y filtro temporal `time_from`/`time_to` en `GET /events`. Frontend: navegación por pestañas (Dashboard · Incidentes · Hallazgos · Cobertura · Eventos · Calidad · Alias) y `DashboardPanel` con Recharts; los gráficos filtran (drill-down a hallazgos y tabla de eventos), heatmap hora×día clicable y comparación SIEM vs calculada. |
 | E | pendiente | Plantillas deterministas + IA (sin chat). |
 | F | pendiente | Informe completo y PDF. |
 | F2 | pendiente | Chat IA sobre el caso. |
@@ -105,17 +105,61 @@
 - Absorción de spraying: los fallos de las víctimas entran en `absorbed_detail` del AUTH-002 y se excluyen de AUTH-001; el evento de éxito correspondiente genera su AUTH-003 aparte.
 - Los eventos de servicio (7036) y logoffs (4634) no se tratan como logons para las reglas de autenticación.
 
+## Fase D — qué quedó hecho
+
+### Backend
+- **`services/stats.py`**: agregados deterministas para el dashboard, calculados desde `result.events` + `detection` + `correlation` ya en memoria (sin segunda pasada sobre el Excel ni IA):
+  - KPIs: eventos totales y con timestamp válido, hallazgos por severidad, incidentes por banda, usuarios/hosts/IPs afectadas, reglas ejecutadas/omitidas/error, overrides manuales y alertas de calidad (timestamps inválidos/faltantes, IPs inválidas, Log_ID sintéticos, duplicados, tipos mezclados), rango temporal.
+  - `events_timeline`: buckets por hora (o por día si el rango supera 192 horas; regla determinista), con `granularity` declarada.
+  - `top`: top-N (10 por defecto, `top_n` configurable 1–50) de IPs origen, usuarios, hosts, Event_ID, origen de log y severidades SIEM; orden determinista (conteo desc, valor asc en empates).
+  - `siem_vs_calculated`: categorías de severidad en orden canónico del PLAN 7.1 (Crítico/Alto/Medio/Bajo, extras alfabéticos) con dos series: eventos por `severity_siem` y hallazgos por severidad calculada. Unidades distintas y marcadas como tales en la UI.
+  - `heatmap`: matriz día × hora (0–23) de eventos.
+  - `mitre`: conteo de técnicas citadas en los hallazgos.
+- **`api/routes_dashboard.py`**: `GET /api/sessions/{id}/stats` (404 si no hay sesión o no hay análisis, mensajes en español). Registrado en `main.py`; health y versión ahora fase D.
+- **Filtro temporal en `GET /api/sessions/{id}/events`**: parámetros `time_from`/`time_to` (ISO 8601, inclusivos, se comparan como hora de pared según PLAN 4.3; inválidos → 400). Los eventos sin timestamp válido quedan fuera del resultado filtrado. Es el soporte del drill-down desde timeline y heatmap.
+
+### Frontend (`frontend/src`)
+- **`App.tsx`**: navegación por pestañas en el paso de análisis: Dashboard · Incidentes · Hallazgos · Cobertura · Eventos · Calidad · Alias (antes todo apilado en vertical). Los drill-downs del dashboard cambian de pestaña y aplican el filtro. Los filtros de hallazgos (severidad + búsqueda) viven ahora en App para que el dashboard pueda accionarlos.
+- **`components/DashboardPanel.tsx`** (nuevo, Recharts ya estaba en `package.json`, sin dependencias nuevas):
+  - 8 KPIs (las tarjetas de Incidentes/Reglas/Calidad navegan a su pestaña).
+  - Hallazgos por criticidad (clic → hallazgos filtrados por severidad) e incidentes por banda (clic → pestaña Incidentes).
+  - Timeline de eventos por bucket (clic → tabla filtrada a ese rango temporal con chip visible y botón para quitarlo).
+  - Severidad SIEM vs calculada (dos series: clic en SIEM filtra eventos por `severity_siem`; clic en calculada filtra hallazgos).
+  - Tops de IPs/usuarios/hosts, Event_ID y origen de log (clic → tabla filtrada por esa columna) y MITRE (clic → hallazgos con búsqueda por técnica). Etiquetas del eje siempre visibles (`interval={0}` + alto proporcional a las entradas) y valores largos acortados en el eje con el valor completo en el tooltip.
+  - Heatmap hora × día como tabla CSS accesible (número en cada celda + tooltip + `aria-label`); celda vacía sin color; clic filtra esa hora.
+- **`EventsTable.tsx`**: `TableQuery` con `timeFrom`/`timeTo`, chip de rango temporal con botón para quitarlo.
+- **`FindingsPanel.tsx`**: filtros elevados a props controladas + campo de búsqueda (regla, MITRE, entidad).
+- **`api.ts`/`types.ts`**: `getStats`, `time_from`/`time_to` en `getEvents`, `q` en `getFindings`, tipos `DashboardStats`/`StatEntry`.
+
+## Validación fase D contra el Excel de ejemplo (10 tests nuevos)
+
+- Coherencia total con el motor: la suma de `findings_by_severity` == `total_findings` == `detection_summary.total_findings`; la suma de `incidents_by_band` == `total_incidents`; la suma del timeline y del heatmap == eventos con timestamp válido.
+- Tops ordenados por conteo descendente y acotados a `top_n`; MITRE derivado íntegramente de los hallazgos.
+- Determinismo: dos llamadas consecutivas a `/stats` devuelven JSON idéntico.
+- Drill-down temporal verificado: filtrar eventos por `time_from` del bucket más poblado devuelve >0 filas, todas con `timestamp_parsed` dentro del rango, y ≤ total con timestamp.
+- `test_health` actualizado a fase D; 404 para sesión inexistente y para sesión sin análisis.
+
+## Decisiones tomadas (fase D)
+
+- El dashboard no recalcula nada en el cliente: un único endpoint `/stats` agrega desde los eventos ya normalizados y los resultados del motor; así UI y API comparten exactamente las mismas cifras.
+- La granularidad del timeline cambia de horas a días con una regla fija (>192 horas de rango), declarada en la respuesta (`granularity`); el frontend no adivina.
+- El drill-down temporal usa `time_from`/`time_to` sobre `timestamp_parsed` comparado como hora de pared (sin conversión de zona horaria, PLAN 4.3); los eventos sin timestamp válido quedan fuera del filtro y así se documenta en el código.
+- Severidad SIEM vs calculada se muestra como dos series separadas (eventos vs hallazgos), nunca como "corrección" de una sobre otra: la severidad del SIEM no influye en el score (PLAN 7.1).
+- El heatmap se hace con tabla HTML en vez de un gráfico de Recharts: control total de accesibilidad (número visible, tooltip, aria-label) y sin librería extra.
+- La navegación por pestañas sustituye el apilado vertical del paso 3: es la "navegación" del criterio de la fase y reduce el scroll con los 7 paneles existentes.
+
 ## Pendientes inmediatos
 
-- Verificación manual de las fases A + B + C por el desarrollador (pasos en la sección "Cómo ejecutar y probar" y en la conversación).
+- Verificación manual de las fases A + B + C + D por el desarrollador (pasos abajo).
+- Aviso de build: el bundle de Vite supera 500 kB por Recharts; code-splitting queda para la fase G (rendimiento).
 - Si conviene, limpiar restos de `data/uploads/` de sesiones que murieron con la recarga del servidor (git-ignorado, sin riesgo de commit).
-- Al hacer commit (lo hace el desarrollador): sugerencia de mensaje → `fase C: correlacion en incidentes, scoring con factores y override manual`.
+- Al hacer commit (lo hace el desarrollador): sugerencia de mensaje → `fase D: dashboard interactivo con stats deterministas, drill-down y navegacion por pestanas`.
 
 ## Cómo ejecutar y probar
 
 - Arrancar todo: `.\start.ps1` (backend http://127.0.0.1:8000 · frontend http://127.0.0.1:5173).
-- Tests: `.\test.ps1` → 77 tests verdes (24 fase A + 34 detección/API + 19 correlación/fase C).
-- API docs: http://127.0.0.1:8000/docs (endpoints `/api/detection/rules`, `/api/sessions/{id}/findings`, `/api/sessions/{id}/coverage`, `/api/sessions/{id}/incidents`, `POST /api/sessions/{id}/overrides`).
+- Tests: `.\test.ps1` → 87 tests verdes (24 fase A + 34 detección/API + 19 correlación/fase C + 10 dashboard/fase D).
+- API docs: http://127.0.0.1:8000/docs (endpoints `/api/detection/rules`, `/api/sessions/{id}/findings`, `/api/sessions/{id}/coverage`, `/api/sessions/{id}/incidents`, `POST /api/sessions/{id}/overrides`, `/api/sessions/{id}/stats`; `/events` admite `time_from`/`time_to`).
 
 ## Recordatorios
 

@@ -19,18 +19,31 @@ interface Props {
   sheet: string;
   onError: (msg: string) => void;
   onOpenEvidence: (logId: string) => void;
+  /** Filtros controlados desde App (el dashboard puede accionarlos). */
+  severityFilter: string;
+  onSeverityFilterChange: (s: string) => void;
+  queryFilter: string;
+  onQueryFilterChange: (q: string) => void;
 }
 
-export function FindingsPanel({ sessionId, sheet, onError, onOpenEvidence }: Props) {
+export function FindingsPanel({
+  sessionId,
+  sheet,
+  onError,
+  onOpenEvidence,
+  severityFilter,
+  onSeverityFilterChange,
+  queryFilter,
+  onQueryFilterChange,
+}: Props) {
   const [data, setData] = useState<FindingsResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [severityFilter, setSeverityFilter] = useState<string>("");
   const [expanded, setExpanded] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    getFindings(sessionId, sheet, severityFilter || undefined)
+    getFindings(sessionId, sheet, severityFilter || undefined, undefined, queryFilter || undefined)
       .then((res) => {
         if (!cancelled) {
           setData(res);
@@ -46,7 +59,7 @@ export function FindingsPanel({ sessionId, sheet, onError, onOpenEvidence }: Pro
     return () => {
       cancelled = true;
     };
-  }, [sessionId, sheet, severityFilter, onError]);
+  }, [sessionId, sheet, severityFilter, queryFilter, onError]);
 
   if (loading) return <p className="text-sm text-slate-500">Cargando hallazgos…</p>;
   if (!data) return null;
@@ -61,10 +74,17 @@ export function FindingsPanel({ sessionId, sheet, onError, onOpenEvidence }: Pro
           {data.total} hallazgo(s) · motor determinista · evidencia por Log_ID
         </span>
         <div className="ml-auto flex items-center gap-2 text-xs">
+          <input
+            type="search"
+            value={queryFilter}
+            onChange={(e) => onQueryFilterChange(e.target.value)}
+            placeholder="Buscar (regla, MITRE, entidad)…"
+            className="rounded border border-slate-300 px-2 py-1 w-56"
+          />
           {SEVERITY_ORDER.filter((s) => sevCounts[s]).map((s) => (
             <button
               key={s}
-              onClick={() => setSeverityFilter(severityFilter === s ? "" : s)}
+              onClick={() => onSeverityFilterChange(severityFilter === s ? "" : s)}
               className={`rounded border px-2 py-0.5 ${
                 severityFilter === s ? SEVERITY_STYLES[s] : "border-slate-300 text-slate-600 hover:bg-slate-50"
               }`}
@@ -72,9 +92,15 @@ export function FindingsPanel({ sessionId, sheet, onError, onOpenEvidence }: Pro
               {s} ({sevCounts[s]})
             </button>
           ))}
-          {severityFilter && (
-            <button onClick={() => setSeverityFilter("")} className="text-slate-500 underline">
-              quitar filtro
+          {(severityFilter || queryFilter) && (
+            <button
+              onClick={() => {
+                onSeverityFilterChange("");
+                onQueryFilterChange("");
+              }}
+              className="text-slate-500 underline"
+            >
+              quitar filtros
             </button>
           )}
         </div>

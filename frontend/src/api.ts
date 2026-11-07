@@ -3,6 +3,7 @@ import type {
   AnalyzeResponse,
   CorrelationResponse,
   CoverageResponse,
+  DashboardStats,
   DataQualityReport,
   EventsResponse,
   FindingsResponse,
@@ -59,6 +60,8 @@ export interface EventsParams {
   sort?: string;
   direction?: "asc" | "desc";
   filters?: Record<string, string>;
+  timeFrom?: string;
+  timeTo?: string;
 }
 
 export async function getEvents(p: EventsParams): Promise<EventsResponse> {
@@ -73,6 +76,8 @@ export async function getEvents(p: EventsParams): Promise<EventsResponse> {
   if (p.filters && Object.keys(p.filters).length > 0) {
     sp.set("filters", JSON.stringify(p.filters));
   }
+  if (p.timeFrom) sp.set("time_from", p.timeFrom);
+  if (p.timeTo) sp.set("time_to", p.timeTo);
   return request<EventsResponse>(`/api/sessions/${p.sessionId}/events?${sp.toString()}`);
 }
 
@@ -99,10 +104,12 @@ export async function getFindings(
   sheet: string,
   severity?: string,
   rule?: string,
+  q?: string,
 ): Promise<FindingsResponse> {
   const sp = new URLSearchParams({ sheet });
   if (severity) sp.set("severity", severity);
   if (rule) sp.set("rule", rule);
+  if (q) sp.set("q", q);
   return request<FindingsResponse>(`/api/sessions/${sessionId}/findings?${sp.toString()}`);
 }
 
@@ -139,5 +146,13 @@ export async function createOverride(
         reason,
       }),
     },
+  );
+}
+
+// ---------- Fase D: dashboard ----------
+
+export async function getStats(sessionId: string, sheet: string): Promise<DashboardStats> {
+  return request<DashboardStats>(
+    `/api/sessions/${sessionId}/stats?sheet=${encodeURIComponent(sheet)}`,
   );
 }

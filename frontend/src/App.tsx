@@ -1,4 +1,6 @@
-// App.tsx - Flujo fase A: subir -> revisar hoja/mapeo -> tabla de eventos.
+// App.tsx - Flujo: subir -> revisar hoja/mapeo -> analisis con navegacion por
+// pestañas (fase D): Dashboard · Incidentes · Hallazgos · Cobertura · Eventos ·
+// Calidad · Alias. Los graficos del dashboard filtran hallazgos/eventos.
 import { useCallback, useState } from "react";
 import type { AnalyzeResponse, UploadResponse } from "./types";
 import type { DataQualityReport } from "./types";
@@ -13,8 +15,20 @@ import { AliasesPanel } from "./components/AliasesPanel";
 import { FindingsPanel } from "./components/FindingsPanel";
 import { CoveragePanel } from "./components/CoveragePanel";
 import { IncidentsPanel } from "./components/IncidentsPanel";
+import { DashboardPanel } from "./components/DashboardPanel";
 
 type Step = "upload" | "mapping" | "table";
+type View = "dashboard" | "incidents" | "findings" | "coverage" | "events" | "quality" | "aliases";
+
+const VIEWS: { id: View; label: string }[] = [
+  { id: "dashboard", label: "Dashboard" },
+  { id: "incidents", label: "Incidentes" },
+  { id: "findings", label: "Hallazgos" },
+  { id: "coverage", label: "Cobertura" },
+  { id: "events", label: "Eventos" },
+  { id: "quality", label: "Calidad" },
+  { id: "aliases", label: "Alias" },
+];
 
 function fmtSize(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -24,6 +38,7 @@ function fmtSize(bytes: number): string {
 
 export default function App() {
   const [step, setStep] = useState<Step>("upload");
+  const [view, setView] = useState<View>("dashboard");
   const [session, setSession] = useState<UploadResponse | null>(null);
   const [sheet, setSheet] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
@@ -32,6 +47,8 @@ export default function App() {
   const [query, setQuery] = useState<TableQuery>(initialQuery);
   const [events, setEvents] = useState<EventsResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [findingsSeverity, setFindingsSeverity] = useState("");
+  const [findingsQuery, setFindingsQuery] = useState("");
 
   const onUploaded = useCallback((res: UploadResponse) => {
     setSession(res);
@@ -40,6 +57,8 @@ export default function App() {
     setAliases(null);
     setQuery(initialQuery);
     setEvents(null);
+    setFindingsSeverity("");
+    setFindingsQuery("");
     setError(null);
     setStep("mapping");
   }, []);
@@ -49,6 +68,7 @@ export default function App() {
       setQuality(q);
       setAliases(al);
       setStep("table");
+      setView("dashboard");
       setError(null);
       void totalRows;
     },
@@ -63,11 +83,42 @@ export default function App() {
     setAliases(null);
     setEvents(null);
     setQuery(initialQuery);
+    setFindingsSeverity("");
+    setFindingsQuery("");
+    setView("dashboard");
     setError(null);
     setStep("upload");
   }, [session]);
 
   const showError = useCallback((msg: string) => setError(msg), []);
+
+  // Drill-downs del dashboard (fase D): aplican filtro y navegan a la pestaña.
+  const openEvidence = useCallback((logId: string) => {
+    setQuery({ ...initialQuery, q: logId });
+    setView("events");
+  }, []);
+
+  const drillSeverity = useCallback((severity: string) => {
+    setFindingsSeverity(severity);
+    setFindingsQuery("");
+    setView("findings");
+  }, []);
+
+  const drillFindingsQuery = useCallback((q: string) => {
+    setFindingsQuery(q);
+    setFindingsSeverity("");
+    setView("findings");
+  }, []);
+
+  const drillEventFilter = useCallback((field: string, value: string) => {
+    setQuery({ ...initialQuery, filters: { [field]: value } });
+    setView("events");
+  }, []);
+
+  const drillTimeRange = useCallback((from: string, to: string) => {
+    setQuery({ ...initialQuery, timeFrom: from, timeTo: to });
+    setView("events");
+  }, []);
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800">
@@ -79,7 +130,7 @@ export default function App() {
         <nav className="flex items-center gap-3 text-sm">
           <StepDot active={step !== "upload"} label="1 · Archivo" />
           <StepDot active={step === "mapping" || step === "table"} label="2 · Hoja y mapeo" />
-          <StepDot active={step === "table"} label="3 · Tabla" />
+          <StepDot active={step === "table"} label="3 · Análisis" />
           {session && (
             <button
               onClick={reset}
@@ -121,34 +172,80 @@ export default function App() {
 
         {step === "table" && session && (
           <div className="space-y-4">
-            <IncidentsPanel
-              sessionId={session.session_id}
-              sheet={sheet}
-              onError={showError}
-              onOpenEvidence={(logId) => setQuery({ ...initialQuery, q: logId })}
-            />
-            <FindingsPanel
-              sessionId={session.session_id}
-              sheet={sheet}
-              onError={showError}
-              onOpenEvidence={(logId) => setQuery({ ...initialQuery, q: logId })}
-            />
-            <CoveragePanel sessionId={session.session_id} sheet={sheet} onError={showError} />
-            <EventsTable
-              sessionId={session.session_id}
-              sheet={sheet}
-              sheets={session.sheets.map((s) => s.name)}
-              onSheetChange={setSheet}
-              query={query}
-              onQueryChange={setQuery}
-              events={events}
-              setEvents={setEvents}
-              loading={loading}
-              setLoading={setLoading}
-              onError={showError}
-            />
-            {quality && <QualityPanel quality={quality} />}
-            {aliases && <AliasesPanel aliases={aliases} />}
+            <nav className="flex flex-wrap gap-1 rounded border border-slate-200 bg-white p-1.5">
+              {VIEWS.map((v) => (
+                <button
+                  key={v.id}
+                  onClick={() => setView(v.id)}
+                  className={`rounded px-3 py-1.5 text-sm ${
+                    view === v.id ? "bg-sky-600 text-white" : "text-slate-600 hover:bg-slate-100"
+                  }`}
+                >
+                  {v.label}
+                </button>
+              ))}
+            </nav>
+
+            {view === "dashboard" && (
+              <DashboardPanel
+                sessionId={session.session_id}
+                sheet={sheet}
+                onError={showError}
+                onDrillSeverity={drillSeverity}
+                onDrillFindingsQuery={drillFindingsQuery}
+                onDrillEventFilter={drillEventFilter}
+                onDrillTimeRange={drillTimeRange}
+                onGoIncidents={() => setView("incidents")}
+                onGoCoverage={() => setView("coverage")}
+                onGoQuality={() => setView("quality")}
+              />
+            )}
+
+            {view === "incidents" && (
+              <IncidentsPanel
+                sessionId={session.session_id}
+                sheet={sheet}
+                onError={showError}
+                onOpenEvidence={openEvidence}
+              />
+            )}
+
+            {view === "findings" && (
+              <FindingsPanel
+                sessionId={session.session_id}
+                sheet={sheet}
+                onError={showError}
+                onOpenEvidence={openEvidence}
+                severityFilter={findingsSeverity}
+                onSeverityFilterChange={setFindingsSeverity}
+                queryFilter={findingsQuery}
+                onQueryFilterChange={setFindingsQuery}
+              />
+            )}
+
+            {view === "coverage" && <CoveragePanel sessionId={session.session_id} sheet={sheet} onError={showError} />}
+
+            {view === "events" && (
+              <EventsTable
+                sessionId={session.session_id}
+                sheet={sheet}
+                sheets={session.sheets.map((s) => s.name)}
+                onSheetChange={setSheet}
+                query={query}
+                onQueryChange={setQuery}
+                events={events}
+                setEvents={setEvents}
+                loading={loading}
+                setLoading={setLoading}
+                onError={showError}
+              />
+            )}
+
+            {view === "quality" && quality && <QualityPanel quality={quality} />}
+            {view === "quality" && !quality && <p className="text-sm text-slate-500">Sin datos de calidad todavía.</p>}
+
+            {view === "aliases" && aliases && <AliasesPanel aliases={aliases} />}
+            {view === "aliases" && !aliases && <p className="text-sm text-slate-500">Sin datos de alias todavía.</p>}
           </div>
         )}
       </main>

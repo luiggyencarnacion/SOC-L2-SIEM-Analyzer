@@ -26,6 +26,7 @@ from app.models.schemas import (
 from app.services import analysis
 from app.services.sessions import SheetData
 from app.services import sessions as store
+from app.services.stats import in_time_range, time_bounds
 
 router = APIRouter(prefix="/api", tags=["ingestion"])
 
@@ -268,8 +269,14 @@ def _filter_rows(
     direction: str,
     filters: Dict[str, str],
     columns: List[str],
+    from_dt: Any = None,
+    to_dt: Any = None,
 ) -> List[Dict[str, Any]]:
     out = rows
+    if from_dt is not None or to_dt is not None:
+        # Rango temporal sobre timestamp_parsed (fase D); los eventos sin
+        # timestamp valido quedan fuera del resultado filtrado.
+        out = [r for r in out if in_time_range(r, from_dt, to_dt)]
     if q:
         needle = q.casefold()
         out = [
@@ -318,6 +325,8 @@ def get_events(
     sort: Optional[str] = Query(None),
     direction: str = Query("asc"),
     filters: Optional[str] = Query(None),  # JSON {"columna": "texto"}
+    time_from: Optional[str] = Query(None),  # ISO 8601; filtro temporal fase D
+    time_to: Optional[str] = Query(None),  # ISO 8601 inclusive
 ) -> Any:
     s = store.get_session(session_id)
     if s is None:
@@ -326,6 +335,10 @@ def get_events(
     if target is None or target not in s.analyses:
         raise HTTPException(status_code=404, detail="Esta sesion aun no tiene analisis. Ejecuta /analyze primero.")
     result = s.analyses[target]
+    try:
+        from_dt, to_dt = time_bounds(time_from, time_to)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Los limites temporales deben ser fechas ISO 8601 validas.")
     parsed_filters: Dict[str, str] = {}
     if filters:
         try:
@@ -336,7 +349,7 @@ def get_events(
             raise HTTPException(status_code=400, detail="El filtro debe ser JSON valido {'columna':'texto'}.")
     if direction not in ("asc", "desc"):
         raise HTTPException(status_code=400, detail="direction debe ser 'asc' o 'desc'.")
-    rows = _filter_rows(result.events, q, sort, direction, parsed_filters, result.columns)
+    rows = _filter_rows(result.events, q, sort, direction, parsed_filters, result.columns, from_dt, to_dt)
     start = (page - 1) * page_size
     end = start + page_size
     visible = [dict(r) for r in rows[start:end]]

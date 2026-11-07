@@ -268,3 +268,65 @@ export interface CorrelationResponse {
 }
 
 export const OVERRIDE_CLASSIFICATIONS = ["Crítico", "Alto", "Medio", "Bajo", "Falso positivo"] as const;
+
+// ---------- Fase D: dashboard ----------
+
+export interface StatEntry {
+  value: string;
+  count: number;
+}
+
+export interface DashboardStats {
+  session_id: string;
+  sheet: string;
+  kpis: {
+    total_events: number;
+    events_with_timestamp: number;
+    total_findings: number;
+    findings_by_severity: Record<string, number>;
+    total_incidents: number;
+    incidents_by_band: Record<string, number>;
+    affected_users: number;
+    affected_hosts: number;
+    affected_source_ips: number;
+    rules_total: number;
+    rules_executed: number;
+    rules_skipped: number;
+    rules_error: number;
+    manual_overrides: number;
+    quality_alerts: {
+      invalid_timestamps: number;
+      missing_timestamps: number;
+      invalid_source_ips: number;
+      synthetic_log_ids: number;
+      duplicate_log_ids: number;
+      mixed_type_columns: number;
+    };
+    time_range: { start: string | null; end: string | null };
+  };
+  events_timeline: {
+    granularity: "hour" | "day";
+    buckets: { bucket: string; count: number }[];
+    total: number;
+  };
+  top: {
+    source_ips: StatEntry[];
+    users: StatEntry[];
+    hosts: StatEntry[];
+    event_codes: StatEntry[];
+    log_sources: StatEntry[];
+    siem_severities: StatEntry[];
+  };
+  siem_vs_calculated: {
+    categories: string[];
+    siem_events: number[];
+    calculated_findings: number[];
+  };
+  heatmap: {
+    days: string[];
+    cells: { day: string; hour: number; count: number }[];
+    total: number;
+  };
+  mitre: StatEntry[];
+  result_distribution: Record<string, number>;
+}

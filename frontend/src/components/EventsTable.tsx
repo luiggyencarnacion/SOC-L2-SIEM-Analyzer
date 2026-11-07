@@ -10,6 +10,8 @@ export interface TableQuery {
   sort: string | null;
   direction: "asc" | "desc";
   filters: Record<string, string>;
+  timeFrom: string | null;
+  timeTo: string | null;
 }
 
 export const initialQuery: TableQuery = {
@@ -19,6 +21,8 @@ export const initialQuery: TableQuery = {
   sort: null,
   direction: "asc",
   filters: {},
+  timeFrom: null,
+  timeTo: null,
 };
 
 const PAGE_SIZES = [50, 100, 250] as const;
@@ -92,6 +96,8 @@ export function EventsTable({
           sort: query.sort ?? undefined,
           direction: query.direction,
           filters: query.filters,
+          timeFrom: query.timeFrom ?? undefined,
+          timeTo: query.timeTo ?? undefined,
         });
         if (!cancelled) {
           setEvents(res);
@@ -117,6 +123,9 @@ export function EventsTable({
     else delete next[col];
     onQueryChange({ ...query, page: 1, filters: next });
   };
+
+  const hasTimeRange = Boolean(query.timeFrom || query.timeTo);
+  const fmtIso = (iso: string | null) => (iso ? iso.replace("T", " ").slice(0, 19) : "");
 
   const toggleSort = (key: string) => {
     if (query.sort === key) {
@@ -177,6 +186,20 @@ export function EventsTable({
           </span>
         )}
       </div>
+
+      {hasTimeRange && (
+        <div className="flex items-center gap-2 text-xs">
+          <span className="rounded bg-sky-100 border border-sky-300 text-sky-900 px-2 py-1">
+            Rango temporal: {fmtIso(query.timeFrom)} → {fmtIso(query.timeTo)}
+          </span>
+          <button
+            onClick={() => onQueryChange({ ...query, timeFrom: null, timeTo: null, page: 1 })}
+            className="rounded bg-slate-100 hover:bg-slate-200 px-2 py-1 text-slate-600"
+          >
+            quitar rango ✕
+          </button>
+        </div>
+      )}
 
       <div className="bg-white rounded-lg border border-slate-200 overflow-x-auto">
         <table className="min-w-full text-xs">
