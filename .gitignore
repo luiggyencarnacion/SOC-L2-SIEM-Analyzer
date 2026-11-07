@@ -1,0 +1,37 @@
+# --- Secretos y entorno ---
+.env
+*.env
+!.env.example
+
+# --- Python ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Node ---
+node_modules/
+frontend/dist/
+dist/
+build/
+.vite/
+
+# --- Datos sensibles y artefactos generados ---
+data/uploads/
+data/exports/
+data/sessions/
+*.log
+*.tlog
+*.tmp
+
+# --- Informes y PDF generados con datos ---
+*.pdf
+
+# --- Sistema ---
+.DS_Store
+Thumbs.db
+desktop.ini
