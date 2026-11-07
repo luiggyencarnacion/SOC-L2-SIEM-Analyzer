@@ -28,6 +28,9 @@ class AnalysisResult:
     events: List[Dict[str, Any]] = field(default_factory=list)
     quality: Dict[str, Any] = field(default_factory=dict)
     detection: Dict[str, Any] = field(default_factory=dict)
+    correlation: Dict[str, Any] = field(default_factory=dict)
+    # Override manual (fase C): "finding:F-001" / "incident:I-002" -> clasificacion + motivo.
+    overrides: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass

@@ -1,6 +1,6 @@
 # PROGRESS.md — Estado del proyecto
 
-Última actualización: fase B1 + B2 implementadas (motor de detección completo, fases 0 y A cerradas).
+Última actualización: fase C implementada (correlación, incidentes, scoring y override; fases 0, A, B1 y B2 cerradas).
 
 ## Estado por fase
 
@@ -10,7 +10,7 @@
 | A | 🔶 implementada — Pendiente: verificación manual del desarrollador | Ingesta + hojas + mapeo + normalización + alias + calidad + tabla. Backend FastAPI, frontend React con subida → mapeo → tabla. |
 | B1 | ✅ implementada — Pendiente: verificación manual del desarrollador | Reglas AUTH-001–005, AUTH-007, PRIV-001/002, EXEC-001–007, PERS-001–003. Motor determinista en `backend/app/detection/` con YAML configurable (`detection/rules/default_rules.yaml`), hallazgos con evidencia por `Log_ID`, afirmaciones Hecho/Inferencia/Hipótesis, cobertura por regla. Absorción AUTH-001→AUTH-002 funcionando (spray del ejemplo: 33 fallos absorbidos, 0 hallazgos AUTH-001). |
 | B2 | ✅ implementada — Pendiente: verificación manual del desarrollador | Reglas LAT-001–004, EXF-001–004, WEB-001–003. LAT-001 anclado a acceso externo (validado con EVT-00188→EVT-00222/225/227/231), LAT-003 exige ≥2 saltos (1 salto → sin hallazgo), LAT-004 `insufficient_data` documentado (requiere línea base, fase H). Endpoints `GET /findings`, `GET /coverage`, `GET /detection/rules`. Frontend: panel de hallazgos (evidencia clickeable que filtra la tabla) y panel de cobertura. |
-| C | pendiente | Correlación, incidentes, scoring y override. |
+| C | 🔶 implementada — Pendiente: verificación manual del desarrollador | Correlación, incidentes, scoring y override. Módulo `backend/app/correlation/` (config YAML + scoring + correlador). El Excel de ejemplo produce **6 cadenas** (I-001..I-006, PLAN §14), relaciones "mismo activo", timeline/IoCs/MITRE/kill chain solo observadas, scoring con invariantes del PLAN 7 y override manual con motivo obligatorio. Endpoints `GET /api/sessions/{id}/incidents` y `POST /api/sessions/{id}/overrides`. Frontend: `IncidentsPanel` con override desde la UI y badge de score/override en hallazgos. |
 | D | pendiente | Dashboard interactivo. |
 | E | pendiente | Plantillas deterministas + IA (sin chat). |
 | F | pendiente | Informe completo y PDF. |
@@ -53,6 +53,49 @@
 - Cadena 6 (web): WEB-001 (15 errores 404/500), WEB-002 (13 peticiones login/admin), WEB-003 **Crítico** (cmd=whoami + `cmd.exe /c whoami` bajo `IIS APPPOOL\DefaultAppPool`, EVT-00599), EXEC-002 (whoami en URL).
 - Cuentas benignas (mruiz, jlopez, dtorres…) sin hallazgos propios; fallos internos aislados no disparan AUTH-002 (anti-ruido).
 
+## Fase C — qué quedó hecho
+
+### Backend (`backend/app/correlation/`)
+- **`config.yaml`**: parámetros de la fase C sin señales del ejemplo hardcodeadas — ventana de correlación (90 min), scores base por severidad (20/45/65/85, PLAN 7.1), bandas (0–39/40–59/60–79/80–100), puntos por factor con **tope +30** (PLAN 7.2), bonus de incidente por fases observadas (+5/fase, tope +15), mapeo kill chain por prefijo de regla con orden canónico, patrones genéricos de cuenta privilegiada / activo crítico, clasificaciones de override permitidas.
+- **`loader.py`**: carga y validación estricta del YAML (severidades completas, bandas coherentes, tipos); error rápido `CorrelationConfigError`; caché de lectura.
+- **`scoring.py`**: `score_hallazgo = min(100, base + min(30, Σ factores))`. Invariante verificado por test: cada severidad sin factores cae exactamente en su banda. Factores: los etiquetados por la detección (`origen_publico`, `acceso_a_datos_sensibles`, `volumen_grande`, `explotacion_web`) + derivados en correlación (multi-host ≥3, persistencia por categoría, evasión/repetición por regla, contexto privilegiado por patrones/categoría, activo crítico por patrón de host). Cada factor aplicado queda con puntos y motivo. La severidad del SIEM no influye (PLAN 7.1).
+- **`correlator.py`**: agrupación por identidad fuerte compartida (usuario, IP de origen o destino) **con** distancia temporal ≤ ventana. Políticas aplicadas:
+  - **Compartir host nunca agrupa solo** (PLAN 6.4): genera relación cruzada "mismo activo: cadenas independientes" entre incidentes.
+  - Los hallazgos de reglas con "objetivo masivo" (`non_linking_user_rules: [AUTH-002]`, configurable) no agrupan por usuario: en un spray las víctimas no son la identidad del actor; el actor se vincula por IP de origen. Sin esto, el spray fusionaba la cadena 1 con la de backupsvc y salían 5 cadenas.
+  - Los destinos tipo share UNC (`\\servidor\recurso`) son entidad débil (como el host): no agrupan.
+  - Fusiones por identidad con misma clave canónica pero valores crudos distintos (`CORP\userone` vs `userone`) quedan anotadas como "relación posible por alias (inferencia)" (PLAN 4.2).
+  - Incidente (`I-001..` ordenado por tiempo): timeline de hallazgos con evidencia clickeable, activos/cuentas afectadas, **IoCs extraídos solo de los eventos de evidencia** (IPs públicas, dominios, URLs, archivos, shares, servicios/tareas, cuentas, hashes si existen), fases kill chain **solo observadas**, MITRE unido, `score_incidente = min(100, max(score_hallazgos) + 5×(fases−1))` con tope de bonus +15, banda coherente y justificación de agrupación (entidades compartidas + distancia máxima + notas de alias).
+- **Integración**: `run_analysis` puntúa los hallazgos y corre la correlación al final de la detección; el resultado vive en `result.correlation` con `overrides` aparte en `AnalysisResult`.
+- **API** (`api/routes_correlation.py`): `GET /api/sessions/{id}/incidents` (incidentes + relaciones + resumen, con overrides aplicados) y `POST /api/sessions/{id}/overrides` (`target_type` finding|incident, clasificación de la lista configurada, **motivo obligatorio**; valida que el objetivo exista; conserva el score automático, PLAN 7). El `GET /findings` existente también refleja el override del hallazgo.
+
+### Frontend (`frontend/src`)
+- `components/IncidentsPanel.tsx`: tarjetas de incidente con banda+score, fases kill chain observadas, MITRE, timeline con `Log_ID` clickeables (filtra la tabla), IoCs por tipo, activos/cuentas afectadas, justificación de agrupación con notas de alias (etiquetadas Inferencia), relaciones "mismo activo" al pie, y formulario de override (clasificación + motivo obligatorio, muestra el valor previo).
+- `components/FindingsPanel.tsx`: badge de score/banda automática y badge de override manual con el motivo en el tooltip.
+- `App.tsx`/`api.ts`/`types.ts`: integración, `getIncidents`, `createOverride` y tipos `Incident`, `OverrideInfo`, `CorrelationResponse`, etc.
+
+## Validación fase C contra el Excel de ejemplo
+
+- **6 cadenas exactas (I-001..I-006), 37 hallazgos repartidos, todos asignados a un incidente**, coinciden con las cadenas del PLAN §14:
+  - I-001 spray DC-01: AUTH-002 + AUTH-003 (mgarcia) + AUTH-004 + PRIV-002 — agrupados por la IP de origen del actor.
+  - I-002 RDP admin + lateral: 12 hallazgos (AUTH-003/005/004, LAT-001, PRIV-002, EXEC-001/002/007, LAT-002, EXEC-005/006, EXF-001) — agrupados por `CORP\admin` y orígenes.
+  - I-003 backup/Finance + vssadmin: EXEC-001, EXF-004, EXEC-004, LAT-002 — por `CORP\backupsvc`.
+  - I-004 Legal + exfiltración: LAT-002, EXEC-005/006, EXF-002/003 — por `CORP\rrojas`.
+  - I-005 persistencia helpdesk: AUTH-007, EXEC-006 ×3, PERS-001/002/003 — por `CORP\helpdesk`.
+  - I-006 web: EXEC-002 ×2, WEB-001/002/003 — por la IP de origen del atacante.
+- 4 relaciones "mismo activo" entre cadenas independientes que comparten FS-SRV01 / APP-SRV01, sin fusionarse.
+- Scores de incidente: 85–100, banda Crítica coherente; override de prueba registrado y reflejado conservando el score automático.
+- Suite: **77 tests verdes** (58 previos + 19 de correlación: invariantes de scoring, tope de factores, no-agrupación por host, ventana temporal, nota de alias, fases solo observadas, IoCs, 6 cadenas, override y validaciones).
+
+## Decisiones tomadas (fase C)
+
+- El YAML de correlación es un archivo aparte (`correlation/config.yaml`) con validación propia; igual filosofía que las reglas: parámetros auditables, sin señales del ejemplo en código.
+- "Identidad fuerte" para agrupar: usuario (clave canónica sin dominio), IP de origen y destino (host/IP). Host y share UNC son débiles: solo generan relación "mismo activo". El PLAN exige no agrupar por servidor compartido y las cadenas 2/3/4 del ejemplo comparten FS-SRV01 con cuentas distintas.
+- AUTH-002 no agrupa por usuario (`non_linking_user_rules`): sus usuarios son el objetivo masivo del spray; sin esta regla el ejemplo daba 5 cadenas en vez de 6.
+- La fase kill chain se asigna por prefijo de regla (AUTH/WEB→Acceso inicial, PRIV→Escalada, EXEC→Ejecución, PERS→Persistencia, LAT→Movimiento lateral, EXF→Exfiltración); solo se muestran fases con hallazgo observado.
+- La distancia temporal entre hallazgos usa la separación entre rangos [start,end] (solapamiento cuenta como 0 min); la ventana por defecto es 90 min configurable en el YAML.
+- Los IoCs se extraen únicamente de los eventos citados como evidencia (campos normalizados: IPs públicas, URLs, rutas, shares, tarea/servicio, cuentas, hashes si existieran), nunca de texto inventado.
+- El override manual se guarda en memoria junto a la sesión (sin persistencia en disco; la sesión ya es en memoria según el PLAN). Clasificaciones permitidas configurables: Crítico/Alto/Medio/Bajo/Falso positivo.
+
 ## Decisiones tomadas (fase B)
 
 - La detección es **100% determinista**: YAML + Python; sin IA, sin hardcodear IPs/usuarios/hostnames del ejemplo; los patrones (`svc`, `finance`, `legal`, códigos, umbrales) son parámetros del YAML.
@@ -64,15 +107,15 @@
 
 ## Pendientes inmediatos
 
-- Verificación manual de las fases A + B por el desarrollador (pasos en la sección "Cómo ejecutar y probar" y en la conversación).
+- Verificación manual de las fases A + B + C por el desarrollador (pasos en la sección "Cómo ejecutar y probar" y en la conversación).
 - Si conviene, limpiar restos de `data/uploads/` de sesiones que murieron con la recarga del servidor (git-ignorado, sin riesgo de commit).
-- Al hacer commit (lo hace el desarrollador): sugerencia de mensaje → `fase B: motor de deteccion B1+B2 con reglas YAML, hallazgos con evidencia y cobertura`.
+- Al hacer commit (lo hace el desarrollador): sugerencia de mensaje → `fase C: correlacion en incidentes, scoring con factores y override manual`.
 
 ## Cómo ejecutar y probar
 
 - Arrancar todo: `.\start.ps1` (backend http://127.0.0.1:8000 · frontend http://127.0.0.1:5173).
-- Tests: `.\test.ps1` → 58 tests verdes (24 fase A + 34 detección/API).
-- API docs: http://127.0.0.1:8000/docs (endpoints `/api/detection/rules`, `/api/sessions/{id}/findings`, `/api/sessions/{id}/coverage`).
+- Tests: `.\test.ps1` → 77 tests verdes (24 fase A + 34 detección/API + 19 correlación/fase C).
+- API docs: http://127.0.0.1:8000/docs (endpoints `/api/detection/rules`, `/api/sessions/{id}/findings`, `/api/sessions/{id}/coverage`, `/api/sessions/{id}/incidents`, `POST /api/sessions/{id}/overrides`).
 
 ## Recordatorios
 

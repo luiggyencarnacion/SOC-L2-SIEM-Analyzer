@@ -1,11 +1,13 @@
 // api.ts - Cliente tipado de la API (rutas relativas al proxy /api de Vite).
 import type {
   AnalyzeResponse,
+  CorrelationResponse,
   CoverageResponse,
   DataQualityReport,
   EventsResponse,
   FindingsResponse,
   MappingEntry,
+  OverrideInfo,
   RowDetail,
   UploadResponse,
 } from "./types";
@@ -107,5 +109,35 @@ export async function getFindings(
 export async function getCoverage(sessionId: string, sheet: string): Promise<CoverageResponse> {
   return request<CoverageResponse>(
     `/api/sessions/${sessionId}/coverage?sheet=${encodeURIComponent(sheet)}`,
+  );
+}
+
+// ---------- Fase C: correlacion y override ----------
+
+export async function getIncidents(sessionId: string, sheet: string): Promise<CorrelationResponse> {
+  return request<CorrelationResponse>(
+    `/api/sessions/${sessionId}/incidents?sheet=${encodeURIComponent(sheet)}`,
+  );
+}
+
+export async function createOverride(
+  sessionId: string,
+  targetType: "finding" | "incident",
+  targetId: string,
+  classification: string,
+  reason: string,
+): Promise<{ ok: boolean; override: OverrideInfo }> {
+  return request<{ ok: boolean; override: OverrideInfo }>(
+    `/api/sessions/${sessionId}/overrides`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        target_type: targetType,
+        target_id: targetId,
+        classification,
+        reason,
+      }),
+    },
   );
 }

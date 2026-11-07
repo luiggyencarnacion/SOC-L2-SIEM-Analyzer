@@ -12,6 +12,7 @@ import { QualityPanel } from "./components/QualityPanel";
 import { AliasesPanel } from "./components/AliasesPanel";
 import { FindingsPanel } from "./components/FindingsPanel";
 import { CoveragePanel } from "./components/CoveragePanel";
+import { IncidentsPanel } from "./components/IncidentsPanel";
 
 type Step = "upload" | "mapping" | "table";
 
@@ -120,6 +121,12 @@ export default function App() {
 
         {step === "table" && session && (
           <div className="space-y-4">
+            <IncidentsPanel
+              sessionId={session.session_id}
+              sheet={sheet}
+              onError={showError}
+              onOpenEvidence={(logId) => setQuery({ ...initialQuery, q: logId })}
+            />
             <FindingsPanel
               sessionId={session.session_id}
               sheet={sheet}

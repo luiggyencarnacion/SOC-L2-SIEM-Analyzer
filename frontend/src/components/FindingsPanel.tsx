@@ -121,6 +121,16 @@ function FindingCard({
         <span className={`rounded border px-2 py-0.5 text-xs font-medium ${style}`}>
           {finding.severity}
         </span>
+        {finding.band !== undefined && (
+          <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600" title="Score automático (fase C)">
+            {finding.score} · {finding.band}
+          </span>
+        )}
+        {finding.override && (
+          <span className="rounded bg-purple-100 px-2 py-0.5 text-xs text-purple-900" title={finding.override.reason}>
+            Override manual: {finding.override.classification}
+          </span>
+        )}
         <button onClick={onToggle} className="text-left text-sm font-semibold text-slate-800 hover:underline">
           {finding.finding_id} · {finding.rule_id} — {finding.rule_name}
         </button>

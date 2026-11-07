@@ -1,0 +1,80 @@
+# correlation/config.yaml - Parametros de correlacion, scoring y override (fase C).
+# PLAN secciones 6.4 y 7. Nada de esto hardcodea senales del archivo cargado:
+# todos los patrones son genericos y configurables.
+
+# Ventana temporal de correlacion (PLAN 6.4): dos hallazgos solo se agrupan si
+# comparten una identidad fuerte y la distancia entre sus rangos temporales
+# es menor o igual a esta ventana.
+window_minutes: 90
+
+# Reglas cuyos usuarios NO cuentan como identidad fuerte para agrupar: en un
+# password spraying los usuarios son el objetivo masivo del ataque, no la
+# identidad del actor; el actor se agrupa por su IP de origen.
+non_linking_user_rules: [AUTH-002]
+
+scoring:
+  # PLAN 7.1: base por severidad. Invariante: base_severity X sin factores
+  # cae exactamente en la banda X.
+  base_scores:
+    Bajo: 20
+    Medio: 45
+    Alto: 65
+    Crítico: 85
+  bands:
+    Bajo: { min: 0, max: 39 }
+    Medio: { min: 40, max: 59 }
+    Alto: { min: 60, max: 79 }
+    Crítico: { min: 80, max: 100 }
+  # PLAN 7.2: puntos por factor. El total de factores tiene tope.
+  factor_points:
+    origen_publico: 5
+    contexto_privilegiado: 10
+    activo_critico: 10
+    acceso_a_datos_sensibles: 5
+    volumen_grande: 10
+    multi_host: 5
+    persistencia: 5
+    evasion: 5
+    repeticion: 5
+    explotacion_web: 5
+  factors_cap: 30
+  # multi_host: se aplica si el hallazgo toca >= N hosts (canonicos).
+  multi_host_min: 3
+  # Reglas que conllevan factor de evasion o repeticion/periodicidad.
+  evasion_rules: [EXEC-001, EXEC-004]
+  repetition_rules: [PERS-003, EXF-003, WEB-001, WEB-002]
+  # Contexto privilegiado: categorias completas o patrones de cuenta
+  # (substring, insensible a mayusculas; son patrones genericos, no señales).
+  privileged_categories: [Privilegios]
+  privileged_user_patterns: ["svc", "helpdesk", "admin", "backup"]
+  # Activo critico configurable por patron de host (substring canonico).
+  critical_host_patterns: ["dc"]
+  # PLAN 7: bonus de incidente por fases observadas adicionales, con tope.
+  incident_phase_bonus: 5
+  incident_bonus_cap: 15
+
+kill_chain:
+  # Mapeo determinista prefijo de regla -> fase. Solo se marcan fases observadas.
+  prefixes:
+    AUTH: Acceso inicial
+    WEB: Acceso inicial
+    PRIV: Escalada de privilegios
+    EXEC: Ejecución
+    PERS: Persistencia
+    LAT: Movimiento lateral
+    EXF: Exfiltración
+  default: Actividad observada
+  # Orden canonico de la kill chain para presentar la progresion.
+  phase_order:
+    - Acceso inicial
+    - Ejecución
+    - Escalada de privilegios
+    - Persistencia
+    - Movimiento lateral
+    - Exfiltración
+
+# Override manual (PLAN 7): conserva el score automatico y anade la
+# clasificacion manual con motivo obligatorio.
+overrides:
+  classifications: [Crítico, Alto, Medio, Bajo, Falso positivo]
+  max_reason_chars: 2000

@@ -82,6 +82,16 @@ def run_analysis(
     from app.detection.engine import run_detection
 
     result.detection = run_detection(events)
+
+    # Fase C: scoring de hallazgos + correlacion en incidentes (PLAN 6.4 y 7).
+    from app.correlation.correlator import run_correlation
+    from app.correlation.loader import load_config_cached
+    from app.correlation.scoring import score_findings
+
+    cfg = load_config_cached()
+    score_findings(result.detection.get("findings", []), cfg)
+    result.correlation = run_correlation(result.detection.get("findings", []), events, cfg)
+
     session.analyses[sheet] = result
     return result
 

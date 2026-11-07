@@ -396,6 +396,11 @@ def session_findings(
             f for f in findings
             if needle in str(f).casefold()
         ]
+    findings = [dict(f) for f in findings]
+    for f in findings:
+        ov = result.overrides.get(f"finding:{f.get('finding_id')}")
+        if ov:
+            f["override"] = ov
     return {
         "session_id": session_id,
         "sheet": result.sheet,

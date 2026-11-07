@@ -155,6 +155,11 @@ export interface Finding {
   factors: string[];
   statements: FindingStatements;
   absorbed_detail?: Record<string, unknown>;
+  score?: number;
+  band?: string;
+  base_score?: number;
+  factors_applied?: { factor: string; points: number; detail: string }[];
+  override?: OverrideInfo | null;
 }
 
 export interface DetectionSummary {
@@ -192,3 +197,74 @@ export interface CoverageResponse {
   summary: DetectionSummary;
   coverage: CoverageEntry[];
 }
+
+// ---------- Fase C: correlacion, incidentes, scoring y override ----------
+
+export interface OverrideInfo {
+  target_type: "finding" | "incident";
+  target_id: string;
+  classification: string;
+  reason: string;
+  created_at: string;
+}
+
+export interface IncidentTimelineEntry {
+  time: string | null;
+  finding_id: string;
+  rule_id: string;
+  rule_name: string;
+  severity: string;
+  score: number;
+  evidence_log_ids: string[];
+}
+
+export interface Incident {
+  incident_id: string;
+  title: string;
+  findings: string[];
+  score: number;
+  band: string;
+  max_finding_score: number;
+  incident_bonus: number;
+  kill_chain_phases: string[];
+  mitre: string[];
+  timeline: IncidentTimelineEntry[];
+  assets: {
+    users: string[];
+    hosts: string[];
+    source_ips: string[];
+    destinations: string[];
+  };
+  iocs: Record<string, string[]>;
+  time_range: { start: string | null; end: string | null };
+  grouping: {
+    shared_entities: Record<string, string[]>;
+    max_gap_minutes: number | null;
+    window_minutes: number;
+    alias_notes: string[];
+    justification: string;
+  };
+  override: OverrideInfo | null;
+}
+
+export interface SameAssetRelation {
+  incidents: string[];
+  shared_hosts: string[];
+  conclusion: string;
+}
+
+export interface CorrelationResponse {
+  session_id: string;
+  sheet: string;
+  summary: {
+    total_incidents: number;
+    incidents_by_band: Record<string, number>;
+    window_minutes: number;
+    findings_assigned: number;
+    total_findings: number;
+  };
+  incidents: Incident[];
+  relations: SameAssetRelation[];
+}
+
+export const OVERRIDE_CLASSIFICATIONS = ["Crítico", "Alto", "Medio", "Bajo", "Falso positivo"] as const;
