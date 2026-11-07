@@ -123,3 +123,72 @@ export interface AnalyzeResponse {
 export interface RowDetail extends EventRow {
   columns: string[];
 }
+
+// ---------- Fase B: deteccion determinista ----------
+
+export interface FindingStatements {
+  hecho: string[];
+  inferencia: string[];
+  hipotesis: string[];
+}
+
+export interface Finding {
+  finding_id: string;
+  rule_id: string;
+  rule_name: string;
+  category: string;
+  severity: string;
+  description: string;
+  rationale: string;
+  mitre: string[];
+  entities: {
+    users: string[];
+    hosts: string[];
+    source_ips: string[];
+    destinations: string[];
+  };
+  total_events_matched: number;
+  evidence_log_ids: string[];
+  total_evidence: number;
+  evidence_omitted: number;
+  time_range: { start: string | null; end: string | null };
+  factors: string[];
+  statements: FindingStatements;
+  absorbed_detail?: Record<string, unknown>;
+}
+
+export interface DetectionSummary {
+  total_rules: number;
+  rules_executed: number;
+  rules_executed_no_findings: number;
+  rules_skipped_disabled: number;
+  rules_skipped_missing_fields: number;
+  rules_insufficient_data: number;
+  rules_error: number;
+  total_findings: number;
+  findings_by_severity: Record<string, number>;
+  elapsed_ms: number;
+}
+
+export interface FindingsResponse {
+  session_id: string;
+  sheet: string;
+  total: number;
+  summary: DetectionSummary;
+  findings: Finding[];
+}
+
+export interface CoverageEntry {
+  rule_id: string;
+  rule_name: string;
+  status: string;
+  reason: string | null;
+  findings: number;
+}
+
+export interface CoverageResponse {
+  session_id: string;
+  sheet: string;
+  summary: DetectionSummary;
+  coverage: CoverageEntry[];
+}

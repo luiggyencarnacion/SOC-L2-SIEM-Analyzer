@@ -27,6 +27,7 @@ class AnalysisResult:
     log_id_column: Optional[int]
     events: List[Dict[str, Any]] = field(default_factory=list)
     quality: Dict[str, Any] = field(default_factory=dict)
+    detection: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

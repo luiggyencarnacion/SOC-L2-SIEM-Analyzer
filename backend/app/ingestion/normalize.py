@@ -7,6 +7,7 @@
 # - Extraccion desde texto libre con regex; siempre marcada como "extraido del texto".
 # - raw conserva la fila completa para evidencia.
 import re
+import ipaddress
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 
@@ -101,7 +102,14 @@ def map_result(value: Any) -> Tuple[str, Optional[int]]:
 # ----------------- IPs -----------------
 
 def validate_ip(value: Any) -> Tuple[Optional[str], Optional[str]]:
-    """Devuelve (ip_norm, scope): scope private|public|loopback|reserved|invalid|None."""
+    """Devuelve (ip_norm, scope): scope private|public|loopback|reserved|invalid|None.
+
+    Clasificacion explicita: RFC1918 (10/8, 172.16/12, 192.168/16) = private;
+    loopback 127/8; enlace/reserva/multicast = reserved; el resto = public.
+    Los rangos de documentacion (192.0.2/24, 198.51.100/24, 203.0.113/24) se
+    tratan como public porque en logs sinteticos representan IPs externas
+    (ipaddress los marca is_private, pero no son RFC1918).
+    """
     text = str(value if value is not None else "").strip()
     if not text:
         return None, None
@@ -121,9 +129,9 @@ def validate_ip(value: Any) -> Tuple[Optional[str], Optional[str]]:
         norm = str(ip)
         if ip.is_loopback:
             scope = "loopback"
-        elif ip.is_private:
+        elif any(ip in net for net in _RFC1918_NETS):
             scope = "private"
-        elif ip.is_reserved or ip.is_multicast or ip.is_link_local:
+        elif ip.is_multicast or ip.is_link_local or ip.is_reserved or ip.is_unspecified:
             scope = "reserved"
         else:
             scope = "public"
@@ -134,6 +142,13 @@ def validate_ip(value: Any) -> Tuple[Optional[str], Optional[str]]:
     return norm, scope_out
 
 
+_RFC1918_NETS = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+]
+
+
 # ----------------- Extraccion desde texto libre -----------------
 
 RE_IP = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
@@ -142,6 +157,10 @@ RE_DOMAIN_USER = re.compile(r"\b([A-Za-z0-9._-]+)\\([A-Za-z0-9._$-]+)\b")
 RE_UNC = re.compile(r"\\\\[A-Za-z0-9._-]+\\[^\s\"';,]+")
 RE_WIN_PATH = re.compile(r"\b(?:[A-Za-z]:\\(?:[^\\/:*?\"<>|\s]+\\?)*|\/(?:[\w.\-]+\/?)+)\b")
 RE_LOGON_TYPE = re.compile(r"[Ll]ogon\s+[Tt]ype:\s*(\d+)")
+RE_LOGON_TYPE_EQ = re.compile(r"[Ll]ogonType\s*=\s*(\d+)")
+RE_SOURCE_HOST = re.compile(r"\bsource(?:_host)?\s*=\s*([A-Za-z0-9._\-]+)")
+RE_BYTES_OUT = re.compile(r"\bbytes_out\s*=\s*(\d+)|\bbytes\s+(?:sent|enviados)\s*[:=]?\s*(\d+)", re.IGNORECASE)
+RE_KV_SEMICOLONS = re.compile(r"^[A-Za-z_]+=.+")
 
 
 def extract_from_text(text: Any) -> Dict[str, Any]:
@@ -165,9 +184,29 @@ def extract_from_text(text: Any) -> Dict[str, Any]:
     paths = list(dict.fromkeys(RE_WIN_PATH.findall(s)))
     if paths:
         out["paths"] = paths
-    m = RE_LOGON_TYPE.search(s)
+    m = RE_LOGON_TYPE.search(s) or RE_LOGON_TYPE_EQ.search(s)
     if m:
+        # Marcado explicito de procedencia: extraido del texto libre.
         out["logon_type"] = m.group(1)
+    m = RE_SOURCE_HOST.search(s)
+    if m:
+        out["origen_en_texto"] = m.group(1)  # host de origen declarado en el texto
+    m = RE_BYTES_OUT.search(s)
+    if m:
+        out["bytes_out"] = int(m.group(1) or m.group(2))
+    if RE_KV_SEMICOLONS.match(s):
+        for kv in s.split(";"):
+            k, _, v = kv.partition("=")
+            k = k.strip().lower()
+            v = v.strip()
+            if k == "taskname":
+                out["task_name_texto"] = v
+            elif k == "action":
+                out["task_action_texto"] = v
+            elif k == "servicename":
+                out["service_name_texto"] = v
+            elif k == "imagepath":
+                out["image_path_texto"] = v
     return out
 
 
@@ -248,6 +287,11 @@ def build_event(
 
     share = raw("share") or (extracted_all.get("unc_paths", [None])[0] if extracted_all.get("unc_paths") else None)
     file_path = raw("file_path")
+    bytes_out = raw("bytes_out")
+    if bytes_out is None:
+        bytes_out = extracted_all.get("bytes_out")
+    task_name = raw("task_service") or extracted_all.get("task_name_texto")
+    service_name = extracted_all.get("service_name_texto")
 
     # http/url desde destino si parece URL.
     dst_split = split_destination(dst_raw)
@@ -294,9 +338,9 @@ def build_event(
         "url_path": url_path or dst_split.get("url_path"),
         "share": str(share) if share is not None else None,
         "file_path": str(file_path) if file_path is not None else None,
-        "bytes_out": None,
-        "task_name": None,
-        "service_name": None,
+        "bytes_out": int(bytes_out) if bytes_out is not None else None,
+        "task_name": str(task_name) if task_name is not None else None,
+        "service_name": str(service_name) if service_name is not None else None,
         "extracted": extracted_all,
         "raw": {
             "fields": row,  # valores crudos conforme al orden detectado de columnas

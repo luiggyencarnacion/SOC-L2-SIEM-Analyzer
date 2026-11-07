@@ -1,8 +1,10 @@
 // api.ts - Cliente tipado de la API (rutas relativas al proxy /api de Vite).
 import type {
   AnalyzeResponse,
+  CoverageResponse,
   DataQualityReport,
   EventsResponse,
+  FindingsResponse,
   MappingEntry,
   RowDetail,
   UploadResponse,
@@ -85,5 +87,25 @@ export async function deleteSession(sessionId: string): Promise<void> {
 export async function getQuality(sessionId: string, sheet: string): Promise<DataQualityReport> {
   return request<DataQualityReport>(
     `/api/sessions/${sessionId}/quality?sheet=${encodeURIComponent(sheet)}`,
+  );
+}
+
+// ---------- Fase B: deteccion ----------
+
+export async function getFindings(
+  sessionId: string,
+  sheet: string,
+  severity?: string,
+  rule?: string,
+): Promise<FindingsResponse> {
+  const sp = new URLSearchParams({ sheet });
+  if (severity) sp.set("severity", severity);
+  if (rule) sp.set("rule", rule);
+  return request<FindingsResponse>(`/api/sessions/${sessionId}/findings?${sp.toString()}`);
+}
+
+export async function getCoverage(sessionId: string, sheet: string): Promise<CoverageResponse> {
+  return request<CoverageResponse>(
+    `/api/sessions/${sessionId}/coverage?sheet=${encodeURIComponent(sheet)}`,
   );
 }

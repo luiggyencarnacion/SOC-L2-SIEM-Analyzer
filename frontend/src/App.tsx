@@ -10,6 +10,8 @@ import { MappingEditor } from "./components/MappingEditor";
 import { EventsTable } from "./components/EventsTable";
 import { QualityPanel } from "./components/QualityPanel";
 import { AliasesPanel } from "./components/AliasesPanel";
+import { FindingsPanel } from "./components/FindingsPanel";
+import { CoveragePanel } from "./components/CoveragePanel";
 
 type Step = "upload" | "mapping" | "table";
 
@@ -64,14 +66,14 @@ export default function App() {
     setStep("upload");
   }, [session]);
 
-  const showError = (msg: string) => setError(msg);
+  const showError = useCallback((msg: string) => setError(msg), []);
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800">
       <header className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold">SOC L2 SIEM Analyzer</h1>
-          <p className="text-xs text-slate-400">Fase A · captación, normalización y tabla de eventos</p>
+          <p className="text-xs text-slate-400">Detección determinista por reglas · evidencia por Log_ID</p>
         </div>
         <nav className="flex items-center gap-3 text-sm">
           <StepDot active={step !== "upload"} label="1 · Archivo" />
@@ -118,6 +120,13 @@ export default function App() {
 
         {step === "table" && session && (
           <div className="space-y-4">
+            <FindingsPanel
+              sessionId={session.session_id}
+              sheet={sheet}
+              onError={showError}
+              onOpenEvidence={(logId) => setQuery({ ...initialQuery, q: logId })}
+            />
+            <CoveragePanel sessionId={session.session_id} sheet={sheet} onError={showError} />
             <EventsTable
               sessionId={session.session_id}
               sheet={sheet}

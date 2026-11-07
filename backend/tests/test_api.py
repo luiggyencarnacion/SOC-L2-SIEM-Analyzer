@@ -142,6 +142,66 @@ def test_upload_valid_and_analyze_end_to_end():
     assert client.get(f"/api/sessions/{sid}").status_code == 404
 
 
+# ---------- Deteccion (fase B) ----------
+
+def test_detection_rules_catalogo():
+    r = client.get("/api/detection/rules")
+    assert r.status_code == 200
+    rules = r.json()["rules"]
+    ids = {x["id"] for x in rules}
+    assert {"AUTH-001", "EXEC-004", "WEB-003", "LAT-001", "EXF-002", "PERS-002"} <= ids
+    assert all({"id", "name", "base_severity", "enabled", "mitre"} <= set(x) for x in rules)
+
+
+def test_findings_y_coverage_end_to_end():
+    data = SAMPLE.read_bytes()
+    r = client.post("/api/upload", files={"file": ("logs.xlsx", data, "application/octet-stream")})
+    body = r.json()
+    sid = body["session_id"]
+    sheet = body["sheets"][0]["name"]
+    mapping = [{"column": s["column"], "field": s["field"]} for s in body["mappings"][0]["suggestions"]]
+    r2 = client.post(f"/api/sessions/{sid}/analyze", json={"sheet": sheet, "header_row": body["sheets"][0]["header_row"], "mapping": mapping})
+    assert r2.status_code == 200
+    resumen = r2.json()["detection_summary"]
+    assert resumen["total_rules"] >= 29
+    assert resumen["rules_error"] == 0
+
+    rc = client.get(f"/api/sessions/{sid}/coverage")
+    assert rc.status_code == 200
+    cov = rc.json()
+    estados = {c["status"] for c in cov["coverage"]}
+    assert "executed" in estados
+    assert len(cov["coverage"]) == resumen["total_rules"]
+
+    rf = client.get(f"/api/sessions/{sid}/findings")
+    assert rf.status_code == 200
+    fj = rf.json()
+    assert fj["total"] == resumen["total_findings"] == len(fj["findings"])
+    for f in fj["findings"]:
+        assert f["evidence_log_ids"], "todo hallazgo debe citar Log_ID"
+        assert {"finding_id", "rule_id", "severity", "statements", "time_range", "entities"} <= set(f)
+        # La evidencia debe ser consulta en la tabla de eventos (frase obligatoria si no existe)
+        lid = f["evidence_log_ids"][0]
+        rd = client.get(f"/api/sessions/{sid}/events/{lid}")
+        assert rd.status_code == 200
+
+    # Filtros de hallazgos
+    rfs = client.get(f"/api/sessions/{sid}/findings", params={"severity": "Crítico"})
+    assert rfs.status_code == 200
+    criticos = rfs.json()["findings"]
+    assert all(f["severity"] == "Crítico" for f in criticos)
+    assert len(criticos) >= 2, "EXEC-004 (vssadmin) y WEB-003 (webshell) son criticos"
+
+    rfr = client.get(f"/api/sessions/{sid}/findings", params={"rule": "AUTH-002"})
+    assert rfr.status_code == 200
+    assert all(f["rule_id"] == "AUTH-002" for f in rfr.json()["findings"])
+
+    # Sesion sin analisis -> 404
+    client.delete(f"/api/sessions/{sid}")
+    assert client.get(f"/api/sessions/{sid}/findings").status_code == 404
+    assert client.get(f"/api/sessions/{sid}/coverage").status_code == 404
+
+
 def test_analyze_requires_structure():
     data = _make_xlsx_bytes(3)
     r = client.post("/api/upload", files={"file": ("ok.xlsx", data, "application/octet-stream")})

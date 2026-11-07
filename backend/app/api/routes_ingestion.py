@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Body, File, HTTPException, Query, UploadFile
 
 from app.core import config
+from app.detection import loader as rules_loader
 from app.ingestion import validator
 from app.ingestion.mapping import (
     build_columns,
@@ -184,6 +185,7 @@ async def analyze_sheet(session_id: str, req: AnalyzeRequest = Body(...)) -> Any
         "quality": quality_out,
         "aliases": aliases,
         "warnings": sheet_warnings,
+        "detection_summary": (result.detection or {}).get("summary", {}),
     }
 
 
@@ -348,6 +350,71 @@ def get_events(
         "page": page,
         "page_size": page_size,
         "rows": visible,
+    }
+
+
+# ---------- Deteccion (fase B) ----------
+
+@router.get("/detection/rules")
+def detection_rules() -> Any:
+    """Catalogo de reglas cargadas desde el YAML (sin secretos ni datos del archivo)."""
+    try:
+        return {"rules": rules_loader.describe_rules()}
+    except rules_loader.DetectionConfigError as exc:
+        raise HTTPException(status_code=500, detail=f"Configuracion de reglas invalida: {exc}")
+
+
+def _get_analysis(session_id: str, sheet: Optional[str]):
+    s = store.get_session(session_id)
+    if s is None:
+        raise HTTPException(status_code=404, detail="Sesion no encontrada o expirada.")
+    target = sheet or next(iter(s.analyses), None)
+    if target is None or target not in s.analyses:
+        raise HTTPException(status_code=404, detail="Esta sesion aun no tiene analisis. Ejecuta /analyze primero.")
+    return s, target, s.analyses[target]
+
+
+@router.get("/sessions/{session_id}/findings")
+def session_findings(
+    session_id: str,
+    sheet: Optional[str] = Query(None),
+    severity: Optional[str] = Query(None),
+    rule: Optional[str] = Query(None),
+    q: Optional[str] = Query(None),
+) -> Any:
+    """Hallazgos del motor determinista con evidencia (Log_ID)."""
+    _, _, result = _get_analysis(session_id, sheet)
+    det = result.detection or {}
+    findings = list(det.get("findings") or [])
+    if severity:
+        findings = [f for f in findings if f.get("severity", "").casefold() == severity.casefold()]
+    if rule:
+        findings = [f for f in findings if f.get("rule_id", "").casefold() == rule.casefold()]
+    if q:
+        needle = q.casefold()
+        findings = [
+            f for f in findings
+            if needle in str(f).casefold()
+        ]
+    return {
+        "session_id": session_id,
+        "sheet": result.sheet,
+        "total": len(findings),
+        "summary": det.get("summary", {}),
+        "findings": findings,
+    }
+
+
+@router.get("/sessions/{session_id}/coverage")
+def session_coverage(session_id: str, sheet: Optional[str] = Query(None)) -> Any:
+    """Cobertura del motor: estado de cada regla y por que se omitio."""
+    _, _, result = _get_analysis(session_id, sheet)
+    det = result.detection or {}
+    return {
+        "session_id": session_id,
+        "sheet": result.sheet,
+        "summary": det.get("summary", {}),
+        "coverage": det.get("coverage", []),
     }
 
 

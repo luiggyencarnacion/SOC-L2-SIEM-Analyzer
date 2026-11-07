@@ -1,22 +1,84 @@
 # PROGRESS.md — Estado del proyecto
 
-Última actualización: fase A implementada (fase 0 cerrada).
+Última actualización: fase B1 + B2 implementadas (motor de detección completo, fases 0 y A cerradas).
 
 ## Estado por fase
 
 | Fase | Estado | Notas |
 |---|---|---|
 | 0 | ✅ completada | Esqueleto: `start.ps1`, `test.ps1`, `.env.example`, `README.md`, `requirements.txt` pinneado, `.venv` creado, frontend `npm install` hecho, `.gitignore` verificado (`data/uploads/` ignorado y confirmado con `git check-ignore`). |
-| A | 🔶 implementada — Pendiente: verificación manual del desarrollador | Ingesta + hojas + mapeo + normalización + alias + calidad + tabla. Backend FastAPI (24 tests verdes), frontend React con subida → mapeo → tabla. Pendiente de qué: recorrer la verificación paso a paso con la app arrancada. |
-| B1 | pendiente | Reglas AUTH-001–005, AUTH-007, PRIV-001/002, EXEC-001–007, PERS-001–003. |
-| B2 | pendiente | Reglas LAT-001–004, EXF-001–004, WEB-001–003. |
+| A | 🔶 implementada — Pendiente: verificación manual del desarrollador | Ingesta + hojas + mapeo + normalización + alias + calidad + tabla. Backend FastAPI, frontend React con subida → mapeo → tabla. |
+| B1 | ✅ implementada — Pendiente: verificación manual del desarrollador | Reglas AUTH-001–005, AUTH-007, PRIV-001/002, EXEC-001–007, PERS-001–003. Motor determinista en `backend/app/detection/` con YAML configurable (`detection/rules/default_rules.yaml`), hallazgos con evidencia por `Log_ID`, afirmaciones Hecho/Inferencia/Hipótesis, cobertura por regla. Absorción AUTH-001→AUTH-002 funcionando (spray del ejemplo: 33 fallos absorbidos, 0 hallazgos AUTH-001). |
+| B2 | ✅ implementada — Pendiente: verificación manual del desarrollador | Reglas LAT-001–004, EXF-001–004, WEB-001–003. LAT-001 anclado a acceso externo (validado con EVT-00188→EVT-00222/225/227/231), LAT-003 exige ≥2 saltos (1 salto → sin hallazgo), LAT-004 `insufficient_data` documentado (requiere línea base, fase H). Endpoints `GET /findings`, `GET /coverage`, `GET /detection/rules`. Frontend: panel de hallazgos (evidencia clickeable que filtra la tabla) y panel de cobertura. |
 | C | pendiente | Correlación, incidentes, scoring y override. |
 | D | pendiente | Dashboard interactivo. |
 | E | pendiente | Plantillas deterministas + IA (sin chat). |
 | F | pendiente | Informe completo y PDF. |
 | F2 | pendiente | Chat IA sobre el caso. |
 | G | pendiente | Pulido, README, errores, rendimiento, seguridad. |
-| H (opcional) | pendiente | AUTH-006, AUTH-008, BASE-001, BASE-002. |
+| H (opcional) | pendiente | AUTH-006, AUTH-008, BASE-001, BASE-002 (LAT-004 también quedaría aquí). |
+
+## Fase B (B1+B2) — qué quedó hecho
+
+### Backend (`backend/app/detection/`)
+- **`rules/default_rules.yaml`**: las 29 reglas aprobadas (PLAN 6.2) con `id`, `name`, `category`, `description`, `rationale`, `base_severity`, `enabled`, `required_fields`, `optional_fields`, `parameters` (umbrales/patrones configurables, sin hardcodear señales), `mitre`, `evidence_limit`, `use_probable_aliases`. `EXEC-004` y `WEB-003` con `base_severity: Crítico`.
+- **`loader.py`**: carga y validación estricta del YAML (campos obligatorios, severidad válida, id duplicada, tipos); error rápido `DetectionConfigError`; caché de lectura.
+- **`context.py`**: índice temporal de eventos (`_ts` cacheado y limpiado al final), ventanas deslizantes (hueco máximo desde el inicio de la ventana), getters de campos abreviados del YAML, `is_logon_event` (códigos 4624/4625/4776 + frases declaradas), `concat_text` para matching de patrones.
+- **`findings.py`**: constructor de `Finding` con `finding_id` (F-001..), `entities` (usuarios/hosts/IPs/destinos con valores crudos), `evidence_log_ids` (limitado por `evidence_limit`, con `total_evidence` y `evidence_omitted`), `time_range`, `statements` {hecho, inferencia, hipótesis} y `absorbed_detail`.
+- **`impl/`**: 7 módulos con la lógica de cada regla:
+  - `auth.py`: AUTH-002 se ejecuta **antes** que AUTH-001/AUTH-004 (orden `RULE_ORDER_OVERRIDE`) y absorbe los fallos de las víctimas del spray (`absorbed_detail.auth_001_absorvidas`); el éxito de la víctima (AUTH-003) nunca se absorbe. Anti-ruido: cluster de spray exige ≥5 usuarios, ≤6 fallos por víctima y (origen público **o** ≥8 intentos totales). AUTH-007: cuentas con patrón `svc/helpdesk/backup` (configurable) con logon interactivo (4624/4672) + condición extra (éxito/4672 desde IP pública **o** persistencia del mismo usuario en el mismo host); la actividad normal de helpdesk sola no dispara.
+  - `privilege.py`: PRIV-001 por códigos (4720/…/4740); PRIV-002 = 4672 con origen de scope público (agrupado por usuario/origen/host).
+  - `execution.py`: EXEC-001 (banderas de evasión PS), EXEC-002 (recon; regex y literales), EXEC-003 (lollbins), EXEC-004 (vssadmin/wmic delete shadows), EXEC-005 (compresión sobre staging/sensible), EXEC-006 (binario en ruta no estándar), EXEC-007 (4104 con contenido relevante + pares padre-hijo configurables).
+  - `persistence.py`: PERS-001 (4698 con TaskName/Action extraídos), PERS-002 (7045/4697 con ServiceName/ImagePath), PERS-003 (≥4 ejecuciones del mismo comando con intervalos ≤30 min).
+  - `lateral.py`: LAT-001 (ancla = logon exitoso con IP pública; lateral = LogonType 3, share 5140/5145, UNC o `source=<host>` en otro host en 30 min), LAT-002 (shares sensibles esporádicos; el torrente masivo lo cubre EXF-004), LAT-003 (solo ≥2 saltos con ancla), LAT-004 (`insufficient_data` documentado; fase H).
+  - `exfil.py`: EXF-001 (5156 a destino externo desde proceso inusual), EXF-002 (POSTs repetidos y/o bytes_out ≥50 MB; suma `bytes_out=` del texto), EXF-003 (subidas periódicas al mismo destino), EXF-004 (≥10 accesos 4663 a carpeta sensible por identidad).
+  - `web.py`: los eventos web se resuelven genéricamente (`url_path` **o** comando **o** destino, porque la URL puede venir en columnas distintas según el export). WEB-001 (ráfaga 404/500 ≥10/15 min por origen), WEB-002 (≥5 peticiones login/admin por origen), WEB-003 (parámetro de comando en URL con shell y/o proceso hijo bajo identidad de app pool).
+- **`engine.py`**: orden con override (AUTH-002→AUTH-001→AUTH-004, resto por id), cobertura por regla con estados `executed / executed_no_findings / skipped_disabled / skipped_missing_fields / insufficient_data / error` (un error de una regla no rompe el análisis), re-numeración temporal de hallazgos, resumen por severidad y `elapsed_ms`.
+- **Normalización (fase A ampliada)**: `normalize.py` extrae desde texto libre `LogonType=N`, `source=<host>`, `bytes_out=N`, `TaskName/Action/ServiceName/ImagePath` (siempre marcados como extraídos); `validate_ip` clasifica por redes explícitas: RFC1918 = private, documentación (192.0.2/24, 198.51.100/24, 203.0.113/24) y CGNAT = public (ipaddress los marca privados en Python 3.13, pero no son RFC1918).
+- **Integración**: `run_detection` se ejecuta al final de `run_analysis`; endpoints nuevos `GET /api/detection/rules`, `GET /api/sessions/{id}/findings` (filtros `severity`/`rule`/`q`), `GET /api/sessions/{id}/coverage`; `analyze` devuelve `detection_summary`.
+
+### Frontend (`frontend/src`)
+- `components/FindingsPanel.tsx`: tarjetas de hallazgo con severidad (colores), MITRE, entidades, afirmaciones Hecho/Inferencia/Hipótesis etiquetadas y evidencia con `Log_ID` clickeable (filtra la tabla por ese Log_ID); filtro por severidad con contadores; texto obligatorio "No hay evidencia en los logs proporcionados." cuando no hay hallazgos.
+- `components/CoveragePanel.tsx`: tabla de cobertura (regla → estado → hallazgos → motivo) con resumen y tiempo de ejecución.
+- `App.tsx`/`api.ts`/`types.ts`: integración y tipos `Finding`, `CoverageEntry`, `DetectionSummary`, etc.
+
+## Validación contra el Excel de ejemplo (715 filas, 6 cadenas)
+
+- **Total: 37 hallazgos (rango 25–50 del plan), 24 reglas ejecutadas, 0 errores de cobertura, ~90 ms.**
+- Cadena 1 (spray DC-01): AUTH-002 ×1 con 33 fallos absorbidos (AUTH-001 ×0), AUTH-003 del éxito de mgarcia (EVT-00123), AUTH-004 y PRIV-002 (4672, EVT-00126).
+- Cadena 2 (RDP admin): AUTH-003/AUTH-005/AUTH-004 (EVT-00174–00188), LAT-001 anclado (EVT-00188 → EVT-00222/225/227/231/232/235), EXEC-001/002/007, LAT-002 share Finance, EXF-001 (salida externa, EVT-00235), PRIV-002 (EVT-00193).
+- Cadena 3 (backup/Finance + vssadmin): EXEC-001 (EVT-00280), EXF-004 con las 16 lecturas (EVT-00284–00309), EXEC-004 **Crítico** (EVT-00314), LAT-002 (EVT-00315).
+- Cadena 4 (Legal + exfiltración): EXEC-005/006 (7z, EVT-00428), EXF-002/EXF-003 con los 22 POSTs (~253 MB).
+- Cadena 5 (persistencia helpdesk): AUTH-007 (logon + persistencia misma cuenta/host), PERS-001 (4698, EVT-00523), PERS-002 (7045, EVT-00524), PERS-003 (5 ejecuciones de `wuhelper.exe` cada 6 min), EXEC-006.
+- Cadena 6 (web): WEB-001 (15 errores 404/500), WEB-002 (13 peticiones login/admin), WEB-003 **Crítico** (cmd=whoami + `cmd.exe /c whoami` bajo `IIS APPPOOL\DefaultAppPool`, EVT-00599), EXEC-002 (whoami en URL).
+- Cuentas benignas (mruiz, jlopez, dtorres…) sin hallazgos propios; fallos internos aislados no disparan AUTH-002 (anti-ruido).
+
+## Decisiones tomadas (fase B)
+
+- La detección es **100% determinista**: YAML + Python; sin IA, sin hardcodear IPs/usuarios/hostnames del ejemplo; los patrones (`svc`, `finance`, `legal`, códigos, umbrales) son parámetros del YAML.
+- El score numérico de hallazgos/incidentes y el override manual quedan para la fase C (PLAN 7); aquí los hallazgos llevan `base_severity` de la regla.
+- `LAT-004` queda con cobertura `insufficient_data` (requiere línea base histórica; fase H), igual que AUTH-006/AUTH-008/BASE-001/BASE-002 (sin implementar aún).
+- Clasificación de IPs: RFC1918 = private; rangos de documentación (usados en logs sintéticos como "IPs externas") = public; decisión documentada en `validate_ip`.
+- Absorción de spraying: los fallos de las víctimas entran en `absorbed_detail` del AUTH-002 y se excluyen de AUTH-001; el evento de éxito correspondiente genera su AUTH-003 aparte.
+- Los eventos de servicio (7036) y logoffs (4634) no se tratan como logons para las reglas de autenticación.
+
+## Pendientes inmediatos
+
+- Verificación manual de las fases A + B por el desarrollador (pasos en la sección "Cómo ejecutar y probar" y en la conversación).
+- Si conviene, limpiar restos de `data/uploads/` de sesiones que murieron con la recarga del servidor (git-ignorado, sin riesgo de commit).
+- Al hacer commit (lo hace el desarrollador): sugerencia de mensaje → `fase B: motor de deteccion B1+B2 con reglas YAML, hallazgos con evidencia y cobertura`.
+
+## Cómo ejecutar y probar
+
+- Arrancar todo: `.\start.ps1` (backend http://127.0.0.1:8000 · frontend http://127.0.0.1:5173).
+- Tests: `.\test.ps1` → 58 tests verdes (24 fase A + 34 detección/API).
+- API docs: http://127.0.0.1:8000/docs (endpoints `/api/detection/rules`, `/api/sessions/{id}/findings`, `/api/sessions/{id}/coverage`).
+
+## Recordatorios
+
+- Regla de oro: todo hallazgo debe tener evidencia con `Log_ID`; si no, frase exacta: "No hay evidencia en los logs proporcionados."
+- La IA no detecta: entra en fase E, y solo redacta a partir de hallazgos deterministas.
+- Commits/push los hace el desarrollador; agentes solo git de lectura.
 
 ## Fase A — qué quedó hecho
 
@@ -40,14 +102,14 @@
   - Normalización/alias: claves `DC-01`/`DC01` → `dc01`, `backupsvc` vs `svc_backup` candidate no fusionado e inferencia etiquetada; timestamps naive/offset/inválidos; `Result` y HTTP codes; IPs y scopes; `process_name` desde CommandLine.
   - API end-to-end con `TestClient`: upload inválido/valido, analyze, 715 filas, paginación, búsqueda, **filtro por columna validado por contenido** (no solo total), orden, detalle crudo, calidad, aliases, delete; estructura mínima insuficiente → 400; Log_ID sintético `ROW-N` cuando no hay columna `log_id`.
 
-## Validación contra el Excel de ejemplo (715 filas)
+## Validación fase A contra el Excel de ejemplo (715 filas)
 
 - Mapeo automático con confianza 100% en las 12 columnas (sin hardcodear descubrimiento: usa sinónimos genéricos en campo nombres de columnas estandarizados).
 - 715 filas normalizadas; timestamps: 715 válidos (hora de pared, sin zona); duplicados de Log_ID: 0.
 - Alias detectados: `DC-01 ↔ DC01` como **probable** (inferencia, no fusionados por sí solos); `CORP\backupsvc ↔ CORP\svc_backup` como **candidate** (no se fusionan).
 - Distribución `result_norm`: success 598 · failure 108 · error 9 (coherente con códigos HTTP 200/404/500 mapeados a success/failure/error).
 
-## Decisiones tomadas
+## Decisiones tomadas (fase A)
 
 - Fase A no usa pandas: `openpyxl` read-only + `data_only` alcanza para leer sin ejecutar fórmulas; pandas se puede incorporar después si se necesita para el dashboard.
 - Los filtros de tabla se formulan con nombres normalizados de campo (`host_raw`, etc.); los nombres exactos de columna cruda pueden variar por archivo.
@@ -56,22 +118,3 @@
 - Alias: `created/confirmed/rejected` por analista llega con la correlación (fase C); fase A solo detecta base.
 - "Unir todas las hojas" se pospone a la integración multi-hoja (no es crítico: el archivo de ejemplo tiene 1 hoja); fase A analiza hojas de forma independiente.
 
-## Pendientes inmediatos
-
-- Verificación manual de la fase A por el desarrollador (lista de pasos en la conversación y en la sección "Cómo ejecutar y probar" abajo).
-- Si conviene, limpiar restos de `data/uploads/` de las sesiones que murieron con la recarga del servidor (git-ignorado, sin riesgo de commit).
-- Al hacer commit (lo hace el desarrollador): sugerencia de mensaje → `fase A: ingestion, mapping, normalization, aliases, quality y tabla de eventos (backend+frontend+tests)`.
-
-## Cómo ejecutar y probar (fase A)
-
-- Arrancar todo: `.\start.ps1` (backend en http://127.0.0.1:8000 · frontend en http://127.0.0.1:5173).
-- Arrancar solo backend: `.\start.ps1 -SkipFrontend` · solo frontend: `.\start.ps1 -SkipBackend`.
-- Tests: `.\test.ps1`  (o `cd backend; .\..\.\.venv\Scripts\python.exe -m pytest -q`).
-- API docs interactivas: http://127.0.0.1:8000/docs
-- Verificación de fase A (criterio): subir `data/sample/...xlsx`, ver 715 filas normalizadas, buscar/filtrar/ordenar en la tabla, cambiar hoja/mapeo/fila de cabecera y re-analizar, revisar alias (probable/candidate) y nulos, intentar subir un `.csv`/`.xls`/archivo corrupto y ver el rechazo con mensaje en español.
-
-## Recordatorios
-
-- Regla de oro: todo hallazgo debe tener evidencia con `Log_ID`; si no, frase exacta: "No hay evidencia en los logs proporcionados."
-- Reglas de Git de `AGENTS.md` se respetan antes de cualquier commit (commit y push los hace el desarrollador).
-- La IA no detecta: entra en fase E, y solo redacta a partir de hallazgos deterministas.

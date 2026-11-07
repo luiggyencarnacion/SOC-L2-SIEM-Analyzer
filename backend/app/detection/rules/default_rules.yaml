@@ -1,0 +1,514 @@
+# detection/rules/default_rules.yaml - Reglas aprobadas del motor determinista (PLAN seccion 6.2).
+# Los umbrales y patrones son PARAMETROS configurables. Ninguna senal (IP, usuario, host,
+# etc.) del archivo cargado va codificada en el codigo de deteccion.
+# Cada regla declara: id, name, category, description, rationale, base_severity, enabled,
+# required_fields, optional_fields, parameters, mitre, evidence_limit, use_probable_aliases.
+rules:
+  # ------------------------ Autenticacion ------------------------
+  - id: AUTH-001
+    name: Fuerza bruta por usuario/IP
+    category: Autenticación
+    description: Repetición de fallos de autenticación del mismo usuario desde la misma IP de origen en una ventana corta.
+    rationale: El patrón de fallos consecutivos del mismo par usuario/origen es característico de pruebas de contraseña por fuerza bruta.
+    base_severity: Alto
+    enabled: true
+    required_fields: [ts, result, user]
+    optional_fields: [src_ip, event_code, host]
+    parameters:
+      min_failures: 5
+      window_minutes: 15
+      failure_results: [failure, denied]
+      failure_codes: ["4625"]
+    mitre: [T1110.001]
+    evidence_limit: 12
+    use_probable_aliases: true
+
+  - id: AUTH-002
+    name: Password spraying
+    category: Autenticación
+    description: Una misma IP de origen acumula pocos intentos fallidos por cuenta, distribuidos en muchas cuentas distintas.
+    rationale: Pocos intentos por cuenta sobre muchas cuentas desde un mismo origen es el patrón típico de un password spraying.
+    base_severity: Alto
+    enabled: true
+    required_fields: [ts, result, src_ip, user]
+    optional_fields: [event_code, host]
+    parameters:
+      min_users: 5
+      max_attempts_per_user: 6
+      min_total_attempts: 8
+      window_minutes: 60
+      failure_results: [failure, denied]
+      failure_codes: ["4625"]
+    mitre: [T1110.003]
+    evidence_limit: 12
+    use_probable_aliases: true
+
+  - id: AUTH-003
+    name: Éxito después de fallos
+    category: Autenticación
+    description: Autenticación exitosa precedida inmediatamente por varios fallos del mismo usuario o del mismo origen.
+    rationale: Un éxito rodeado de fallos previos del mismo origen o identidad sugiere que la fuerza bruta o el spraying acabó de conseguir acceso.
+    base_severity: Alto
+    enabled: true
+    required_fields: [ts, result, user]
+    optional_fields: [src_ip, event_code, host]
+    parameters:
+      min_failures: 3
+      window_minutes: 25
+      failure_results: [failure, denied]
+      failure_codes: ["4625"]
+      success_results: [success]
+      success_codes: ["4624"]
+    mitre: [T1078]
+    evidence_limit: 12
+    use_probable_aliases: true
+
+  - id: AUTH-004
+    name: Login desde IP pública hacia activo interno
+    category: Autenticación
+    description: Autenticación exitosa desde un origen con IP pública hacia un activo interno del entorno.
+    rationale: Los accesos externos válidos sobre activos internos pueden indicar credenciales comprometidas y deben revisarse con prioridad.
+    base_severity: Alto
+    enabled: true
+    required_fields: [ts, result, src_ip]
+    optional_fields: [user, event_code, host]
+    parameters:
+      success_results: [success]
+      success_codes: ["4624"]
+      logon_event_words: ["log on"]
+    mitre: [T1078, T1133]
+    evidence_limit: 12
+    use_probable_aliases: true
+
+  - id: AUTH-005
+    name: RDP/LogonType 10 sospechoso
+    category: Autenticación
+    description: Sesión RDP (LogonType 10) con fallos previos u origen externo sobre el mismo host en una ventana corta.
+    rationale: El acceso administrativo remoto por RDP, sobre todo con fallos previos u origen público, es vector habitual de intrusión y movimiento.
+    base_severity: Alto
+    enabled: true
+    required_fields: [ts, result]
+    optional_fields: [user, src_ip, logon_type, event_code, host]
+    parameters:
+      fail_threshold: 2
+      rdp_type: "10"
+      window_minutes: 30
+      logon_event_words: ["log on"]
+    mitre: [T1021.001]
+    evidence_limit: 12
+    use_probable_aliases: true
+
+  - id: AUTH-007
+    name: Cuenta de servicio/helpdesk interactiva u origen raro
+    category: Autenticación
+    description: Cuenta con patrón de servicio (prefs. declarados) con logon interactivo o shell acompañados de otra señal adicional (IP pública, 4672 o persistencia cercana).
+    rationale: Las cuentas automatizadas no deberían iniciar sesión interactiva; si además coinciden otras señales, hay indicios de uso indebido de la cuenta.
+    base_severity: Alto
+    enabled: true
+    required_fields: [ts, user]
+    optional_fields: [src_ip, event_code, host, result, cmd]
+    parameters:
+      user_patterns: ["svc", "helpdesk", "backup"]
+      window_minutes: 30
+      interactive_codes: ["4624", "4672"]
+      extra_codes_public: ["4672"]
+      extra_codes_persistence: ["4698", "7045"]
+    mitre: [T1078.002]
+    evidence_limit: 12
+    use_probable_aliases: true
+
+  # ------------------------ Privilegios ------------------------
+  - id: PRIV-001
+    name: Altas/cambios en cuentas o grupos privilegiados
+    category: Privilegios
+    description: Creación o modificación de cuentas y grupos privilegiados (códigos 4720/4722/4724/4725/4726/4728/4732/4756/4740).
+    rationale: Los cambios de membresía en grupos privilegiados amplían el acceso del atacante y deben correlacionarse con el resto del incidente.
+    base_severity: Alto
+    enabled: true
+    required_fields: [ts, event_code]
+    optional_fields: [user, host, result]
+    parameters:
+      codes: ["4720", "4722", "4724", "4725", "4726", "4728", "4732", "4756", "4740"]
+    mitre: [T1098]
+    evidence_limit: 12
+    use_probable_aliases: true
+
+  - id: PRIV-002
+    name: Asignación de privilegios especiales (4672) en contexto anómalo
+    category: Privilegios
+    description: El evento 4672 (privilegios especiales) se otorga en un contexto anómalo para el entorno, p. ej. desde origen externo.
+    rationale: 4672 es normal en cuentas administrativas ya establecidas; en cuentas u orígenes atípicos indica escalada o uso de credenciales nuevas.
+    base_severity: Medio
+    enabled: true
+    required_fields: [ts, event_code, src_ip]
+    optional_fields: [user, host, result]
+    parameters:
+      codes: ["4672"]
+      anomalous_scopes: [public]
+    mitre: [T1078]
+    evidence_limit: 12
+    use_probable_aliases: true
+
+  # ------------------------ Ejecucion y evasion ------------------------
+  - id: EXEC-001
+    name: PowerShell encoded/bypass/hidden
+    category: Ejecución
+    description: PowerShell con argumentos de evasión (-EncodedCommand, -w hidden, -nop, Bypass, etc.).
+    rationale: Las banderas de ofuscación o bypass reducen la visibilidad de la ejecución y son típicas de comandos maliciosos.
+    base_severity: Alto
+    enabled: true
+    required_fields: [ts]
+    optional_fields: [cmd, user, host, event_code, src_ip]
+    parameters:
+      cmd_patterns: ["-EncodedCommand", "-enc ", "-w hidden", "-nop ", "ExecutionPolicy Bypass", "-Bypass"]
+    mitre: [T1059.001]
+    evidence_limit: 8
+    use_probable_aliases: true
+
+  - id: EXEC-002
+    name: Comandos de reconocimiento
+    category: Ejecución
+    description: Ejecución de utilidades de diagnóstico/reconocimiento (whoami, net, ipconfig, systeminfo, cmdlets de enumeración).
+    rationale: Tras ganar acceso, los atacantes mapean el entorno con estas utilidades; solas son normales, en cadena son sospechosas.
+    base_severity: Medio
+    enabled: true
+    required_fields: [ts]
+    optional_fields: [cmd, user, host, event_code, src_ip]
+    parameters:
+      cmd_patterns: ["\\bwhoami\\b", "\\bnet\\.exe\\s+(view|use|group|user)\\b", "\\bnet\\s+(view|use|group|user)\\b", "\\bipconfig\\b", "\\bsysteminfo\\b", "Get-LocalGroupMember", "Get-SmbShare", "Get-ADUser", "Get-NetSession"]
+      window_minutes: 30
+    mitre: [T1033, T1087]
+    evidence_limit: 8
+    use_probable_aliases: true
+
+  - id: EXEC-003
+    name: LOLBins / binarios dual-use
+    category: Ejecución
+    description: Uso de binarios de uso dual para transferir o ejecutar código (certutil, bitsadmin, mshta, rundll32, reg add, etc.).
+    rationale: Estos binarios permiten descargar, decodificar o ejecutar contenido sin herramientas dedicadas y elevan la probabilidad de intrusión.
+    base_severity: Alto
+    enabled: true
+    required_fields: [ts]
+    optional_fields: [cmd, user, host, event_code]
+    parameters:
+      cmd_patterns: ["\\bcertutil\\b", "\\bbitsadmin\\b", "\\bmshta\\b", "\\brundll32\\b", "\\breg\\s+add\\b"]
+    mitre: [T1105, T1218]
+    evidence_limit: 8
+    use_probable_aliases: true
+
+  - id: EXEC-004
+    name: Borrado de copias de sombra
+    category: Ejecución
+    description: Uso de vssadmin/wmic para eliminar copias de sombra del sistema.
+    rationale: El borrado de sombras destruye el mecanismo de restauración; es un indicador casi inequívoco de destructividad o preparación de ransomware.
+    base_severity: Crítico
+    enabled: true
+    required_fields: [ts]
+    optional_fields: [cmd, user, host, event_code]
+    parameters:
+      cmd_patterns: ["vssadmin[^;]*delete\\s+shadows", "wmic\\s+shadowcopy\\s+delete"]
+    mitre: [T1490]
+    evidence_limit: 8
+    use_probable_aliases: true
+
+  - id: EXEC-005
+    name: Compresión/staging de datos
+    category: Ejecución
+    description: Herramientas de archivo (tar, 7z, zip, rar) creando contenedores sobre rutas sensibles o de staging (Temp/Public).
+    rationale: Empaquetar ficheros de carpetas sensibles o de staging en carpetas temporales es el paso previo típico de la exfiltración.
+    base_severity: Alto
+    enabled: true
+    required_fields: [ts]
+    optional_fields: [cmd, user, host, event_code]
+    parameters:
+      archive_patterns: ["\\btar\\.exe\\b", "\\b7z\\.exe\\b", "\\bCompress-Archive\\b", "\\brar\\.exe\\s+a\\b", "\\bzip\\.exe\\s+-"]
+      staging_tokens: ["\\temp", "\\users\\public\\", "\\windows\\temp", "programdata"]
+      sensitive_tokens: ["finance", "legal", "rrhh", "contab", "recursos humanos"]
+    mitre: [T1560.001]
+    evidence_limit: 8
+    use_probable_aliases: true
+
+  - id: EXEC-006
+    name: Binario en ruta no estándar
+    category: Ejecución
+    description: Ejecución de un ejecutable desde rutas no habituales para el sistema (ProgramData, Temp, Public, AppData Temp).
+    rationale: Los procesos legítimos del sistema residen en rutas estándar; un ejecutable en temporales o staging suele ser payload o dropper.
+    base_severity: Medio
+    enabled: true
+    required_fields: [ts]
+    optional_fields: [cmd, user, host, event_code]
+    parameters:
+      non_standard_paths: ["\\programdata\\", "\\temp\\", "\\users\\public\\", "\\appdata\\local\\temp\\", "\\windows\\temp\\"]
+      window_minutes: 30
+    mitre: [T1106]
+    evidence_limit: 8
+    use_probable_aliases: true
+
+  - id: EXEC-007
+    name: Parent-child anómalo o ScriptBlock 4104
+    category: Ejecución
+    description: Relación padre-hijo inusual (ofimática → ejecutables, cmd → powershell, powershell → recon) o registro de PowerShell (4104).
+    rationale: Las cadenas de procesos inusuales o el registro 4104 revelan ejecución originada por vectores de ofimática/scripting usados como primer paso de intrusión.
+    base_severity: Medio
+    enabled: true
+    required_fields: [ts]
+    optional_fields: [cmd, user, host, event_code, msg]
+    parameters:
+      ps_block_codes: ["4104"]
+      parent_child_pairs:
+        - ["cmd.exe", "powershell.exe"]
+        - ["powershell.exe", "net.exe"]
+        - ["outlook.exe", "*"]
+        - ["winword.exe", "*"]
+        - ["excel.exe", "*"]
+      window_minutes: 30
+    mitre: [T1059.001]
+    evidence_limit: 8
+    use_probable_aliases: true
+
+  # ------------------------ Persistencia ------------------------
+  - id: PERS-001
+    name: Tarea programada creada
+    category: Persistencia
+    description: Creación de una tarea programada (4698) con la acción declarada.
+    rationale: Una tarea programada recurrente pone en marcha el payload de manera persistente incluso sin sesión interactiva.
+    base_severity: Medio
+    enabled: true
+    required_fields: [ts, event_code]
+    optional_fields: [cmd, user, host, msg]
+    parameters:
+      codes: ["4698"]
+    mitre: [T1053.005]
+    evidence_limit: 8
+    use_probable_aliases: true
+
+  - id: PERS-002
+    name: Servicio instalado
+    category: Persistencia
+    description: Instalación de un servicio nuevo (7045) con su binario declarado.
+    rationale: Un servicio nuevo con binario propio es un mecanismo clásico de persistencia y debe revisarse de inmediato.
+    base_severity: Alto
+    enabled: true
+    required_fields: [ts, event_code]
+    optional_fields: [cmd, user, host, msg]
+    parameters:
+      codes: ["7045", "4697"]
+    mitre: [T1543.003]
+    evidence_limit: 8
+    use_probable_aliases: true
+
+  - id: PERS-003
+    name: Ejecución periódica / beaconing
+    category: Persistencia
+    description: Repetición periódica de la misma ejecución (mismo host/usuario/comando) en intervalos cortos y regulares.
+    rationale: La repetición de un comando con cadencia estable refleja el ritmo de un agente persistente o de una tarea que refresca el payload.
+    base_severity: Medio
+    enabled: true
+    required_fields: [ts, event_code, cmd]
+    optional_fields: [user, host]
+    parameters:
+      codes: ["4688"]
+      min_executions: 4
+      max_interval_minutes: 30
+    mitre: [T1569]
+    evidence_limit: 12
+    use_probable_aliases: true
+
+  # ------------------------ Movimiento lateral ------------------------
+  - id: LAT-001
+    name: Movimiento lateral anclado a acceso externo/RDP
+    category: Movimiento lateral
+    description: Tras un logon exitoso externo o RDP público, la misma identidad reaparece con LogonType 3, share o source=<host> en otro host.
+    rationale: La cadena externo → host inicial → otro host con la misma identidad es el patrón canónico del atacante desplazándose en la red.
+    base_severity: Alto
+    enabled: true
+    required_fields: [ts, result, user]
+    optional_fields: [src_ip, logon_type, event_code, host, share, msg]
+    parameters:
+      window_minutes: 30
+      lateral_types: ["3"]
+      lateral_codes_shares: ["5140", "5145"]
+      lateral_codes_logon: ["4624", "4625"]
+      anchor_scope: public
+      success_results: [success]
+    mitre: [T1021, T1078]
+    evidence_limit: 16
+    use_probable_aliases: true
+
+  - id: LAT-002
+    name: Acceso a shares SMB sensibles
+    category: Movimiento lateral
+    description: Acceso esporádico (pocos eventos) a un share UNC de una carpeta sensible declarada en la configuración.
+    rationale: El acceso puntual a shares de datos sensibles por cuentas sin actividad recurrente suele preceder a la recolección de información.
+    base_severity: Medio
+    enabled: true
+    required_fields: [ts]
+    optional_fields: [share, dst, user, host, event_code, cmd, msg]
+    parameters:
+      sensitive_tokens: ["finance", "legal", "rrhh", "contab", "recursos humanos"]
+      share_codes: ["5140", "5145"]
+      max_single_accesses: 3
+      window_minutes: 30
+    mitre: [T1021.002]
+    evidence_limit: 12
+    use_probable_aliases: true
+
+  - id: LAT-003
+    name: Cadena de LogonType 3 multi-salto
+    category: Movimiento lateral
+    description: Cadena de logon de red (LogonType 3) encadenada de un host a otro, con 2 o más saltos, anclada a LAT-001.
+    rationale: Un solo salto ya queda descrito en LAT-001; con dos o más saltos la identidad se desplaza explícitamente por la red.
+    base_severity: Medio
+    enabled: true
+    required_fields: [ts, result, user, logon_type]
+    optional_fields: [src_ip, host, msg]
+    parameters:
+      window_minutes_after_anchor: 30
+      min_hops: 2
+      lateral_types: ["3"]
+      success_results: [success]
+    mitre: [T1021]
+    evidence_limit: 12
+    use_probable_aliases: true
+
+  - id: LAT-004
+    name: Host interno con actividad externa nueva
+    category: Movimiento lateral
+    description: Host interno con destino externo no observado previamente respecto a su línea base.
+    rationale: Un host interno que contacta un destino externo inédito respecto a su base puede indicar la conexión de un agente o beacon.
+    base_severity: Medio
+    enabled: true
+    required_fields: [ts, src_ip, dst]
+    optional_fields: [host, event_code, user]
+    # Requiere datos historicos de linea base no disponibles en el archivo exportado;
+    # el motor la reporta como insufficient_data hasta la fase H.
+    parameters:
+      baseline_min_days: 7
+    mitre: [T1595]
+    evidence_limit: 12
+    use_probable_aliases: false
+
+  # ------------------------ Exfiltracion ------------------------
+  - id: EXF-001
+    name: Conexión saliente externa desde servidor/proceso inusual (5156)
+    category: Exfiltración
+    description: Evento 5156 (conexión permitida) con destino externo desde un proceso inusual en un servidor.
+    rationale: La conectividad saliente externa desde binarios administrativos en servidores es de las formas más frecuentes de abrir un canal de salida.
+    base_severity: Alto
+    enabled: true
+    required_fields: [ts, event_code, src_ip, dst]
+    optional_fields: [host, user, cmd]
+    parameters:
+      connection_code: "5156"
+      unusual_processes: ["powershell", "cmd", "7z", "tar", "rar", "python", "certutil", "bitsadmin", "mshta", "rundll32", "curl"]
+    mitre: [T1041]
+    evidence_limit: 12
+    use_probable_aliases: true
+
+  - id: EXF-002
+    name: POST salientes repetidos o bytes_out grande
+    category: Exfiltración
+    description: Repetición de peticiones POST salientes y/o volumen total de bytes_out por encima del umbral en una ventana.
+    rationale: Muchos POST repetidos o un volumen anómalo hacia el mismo destino externo son la firma clásica de un canal de exfiltración.
+    base_severity: Alto
+    enabled: true
+    required_fields: [ts, dst]
+    optional_fields: [cmd, user, host, msg, http]
+    parameters:
+      min_posts: 3
+      post_words: ["POST"]
+      window_minutes: 60
+      bytes_threshold_mb: 50
+      bytes_pattern: "bytes_out\\s*=\\s*(\\d+)"
+    mitre: [T1041]
+    evidence_limit: 25
+    use_probable_aliases: true
+
+  - id: EXF-003
+    name: Subidas periódicas al mismo destino
+    category: Exfiltración
+    description: Subidas recurrentes al mismo destino externo con cadencia corta y estable.
+    rationale: La recurrencia de subidas hacia un mismo destino marca un canal estructurado para mover contenido hacia el exterior.
+    base_severity: Alto
+    enabled: true
+    required_fields: [ts, dst]
+    optional_fields: [user, host, msg, cmd, http]
+    parameters:
+      min_uploads: 5
+      max_interval_minutes: 30
+      upload_words: ["upload", "put", "post"]
+    mitre: [T1041]
+    evidence_limit: 25
+    use_probable_aliases: true
+
+  - id: EXF-004
+    name: Lectura masiva en carpetas sensibles (4663)
+    category: Exfiltración
+    description: Muchos accesos (4663) a ficheros dentro de una misma carpeta sensible por la misma identidad.
+    rationale: La lectura masiva y rápida de ficheros sensibles desde una cuenta concreta es el patrón de recolección previo a la exfiltración.
+    base_severity: Alto
+    enabled: true
+    required_fields: [ts, event_code]
+    optional_fields: [user, host, cmd, file_path, dst, share]
+    parameters:
+      object_code: "4663"
+      sensitive_tokens: ["finance", "legal", "rrhh", "contab", "recursos humanos"]
+      min_reads: 10
+      window_minutes: 30
+      prefix_words: ["file access", "archivo accedido"]
+    mitre: [T1213, T1083]
+    evidence_limit: 20
+    use_probable_aliases: true
+
+  # ------------------------ Web ------------------------
+  - id: WEB-001
+    name: Ráfaga de errores HTTP (404/500)
+    category: Web
+    description: Ráfaga de respuestas 404/500 desde una misma IP de origen hacia el mismo host web.
+    rationale: Las ráfagas de errores consecutivos detectan escaneos de rutas o ataques automatizados contra la aplicación web.
+    base_severity: Medio
+    enabled: true
+    required_fields: [ts, dst]
+    optional_fields: [src_ip, host, http, msg]
+    parameters:
+      error_statuses: [404, 500]
+      min_errors: 10
+      window_minutes: 15
+    mitre: [T1595.003]
+    evidence_limit: 12
+    use_probable_aliases: true
+
+  - id: WEB-002
+    name: Enumeración de admin/login con usuario en URL
+    category: Web
+    description: Peticiones repetidas a rutas de administración/login con tokens de usuario/sesión en la URL.
+    rationale: El bombardeo a rutas administrativas con valores en la URL refleja intentos de descubrir logins válidos o credenciales.
+    base_severity: Medio
+    enabled: true
+    required_fields: [ts, dst]
+    optional_fields: [src_ip, host, msg, http]
+    parameters:
+      path_tokens: ["login", "admin", "panel", "user=", "account="]
+      min_requests: 5
+      window_minutes: 30
+    mitre: [T1110, T1592]
+    evidence_limit: 12
+    use_probable_aliases: true
+
+  - id: WEB-003
+    name: Webshell / inyección de comandos en URL o proceso hijo de IIS
+    category: Web
+    description: URLs con parámetros de comando ejecutado (cmd=..., exec=...) y/o proceso hijo de shell creado bajo el pool de la aplicación web.
+    rationale: La combinación de consultas web con parámetros de comando y un shell hijo bajo la identidad del servidor de aplicaciones es evidencia directa de webshell.
+    base_severity: Crítico
+    enabled: true
+    required_fields: [ts, dst]
+    optional_fields: [src_ip, host, msg, http, user, event_code, cmd]
+    parameters:
+      cmd_param_names: ["cmd=", "exec=", "runcmd="]
+      shell_tokens: ["whoami", "powershell", "cmd.exe", "sh.exe", "bash.exe", "dir ", "type "]
+      app_pool_tokens: ["apppool", "iis"]
+      window_minutes: 15
+    mitre: [T1505.003]
+    evidence_limit: 12
+    use_probable_aliases: true

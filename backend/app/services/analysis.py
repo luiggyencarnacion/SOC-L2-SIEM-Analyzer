@@ -77,6 +77,11 @@ def run_analysis(
         quality=q,
     )
     result.quality["aliases"] = aliases_mod.build_alias_report(host_vals, user_vals)
+
+    # Fase B: motor determinista de deteccion sobre los eventos normalizados.
+    from app.detection.engine import run_detection
+
+    result.detection = run_detection(events)
     session.analyses[sheet] = result
     return result
 
