@@ -16,14 +16,16 @@ import { FindingsPanel } from "./components/FindingsPanel";
 import { CoveragePanel } from "./components/CoveragePanel";
 import { IncidentsPanel } from "./components/IncidentsPanel";
 import { DashboardPanel } from "./components/DashboardPanel";
+import { NarrativePanel } from "./components/NarrativePanel";
 
 type Step = "upload" | "mapping" | "table";
-type View = "dashboard" | "incidents" | "findings" | "coverage" | "events" | "quality" | "aliases";
+type View = "dashboard" | "incidents" | "findings" | "coverage" | "events" | "quality" | "aliases" | "narrative";
 
 const VIEWS: { id: View; label: string }[] = [
   { id: "dashboard", label: "Dashboard" },
   { id: "incidents", label: "Incidentes" },
   { id: "findings", label: "Hallazgos" },
+  { id: "narrative", label: "Redacción" },
   { id: "coverage", label: "Cobertura" },
   { id: "events", label: "Eventos" },
   { id: "quality", label: "Calidad" },
@@ -220,6 +222,15 @@ export default function App() {
                 onSeverityFilterChange={setFindingsSeverity}
                 queryFilter={findingsQuery}
                 onQueryFilterChange={setFindingsQuery}
+              />
+            )}
+
+            {view === "narrative" && (
+              <NarrativePanel
+                sessionId={session.session_id}
+                sheet={sheet}
+                onError={showError}
+                onOpenEvidence={openEvidence}
               />
             )}
 

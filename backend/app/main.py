@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.api.routes_ai import router as ai_router
 from app.api.routes_correlation import router as correlation_router
 from app.api.routes_dashboard import router as dashboard_router
 from app.api.routes_ingestion import router as ingestion_router
@@ -16,7 +17,7 @@ log = logging.getLogger("soc-l2")
 
 app = FastAPI(
     title="SOC L2 SIEM Analyzer",
-    version="0.1.0 (fase D)",
+    version="0.1.0 (fase E)",
     description="Analisis local de logs .xlsx exportados de un SIEM.",
 )
 
@@ -40,9 +41,10 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok", "fase": "D", "bind": f"{config.API_HOST}:{config.API_PORT}"}
+    return {"status": "ok", "fase": "E", "bind": f"{config.API_HOST}:{config.API_PORT}"}
 
 
 app.include_router(ingestion_router)
 app.include_router(correlation_router)
 app.include_router(dashboard_router)
+app.include_router(ai_router)

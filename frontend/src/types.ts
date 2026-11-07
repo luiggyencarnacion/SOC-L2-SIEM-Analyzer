@@ -330,3 +330,59 @@ export interface DashboardStats {
   mitre: StatEntry[];
   result_distribution: Record<string, number>;
 }
+
+// ---------- Fase E: redaccion por plantillas y IA con anti-alucinacion ----------
+
+export interface AiSettings {
+  provider: string;
+  effective_provider: string;
+  model: string;
+  base_url: string;
+  key_configured: boolean;
+  temperature: number;
+  timeout_seconds: number;
+  mode: "plantillas" | "ia";
+  providers_available: string[];
+}
+
+export interface AiTestResult {
+  ok: boolean;
+  provider: string;
+  effective_provider: string;
+  mode: "plantillas" | "ia";
+  detail: string;
+}
+
+export interface NarrativeParagraph {
+  label: string;
+  text: string;
+  citations: string[];
+  source: "plantilla" | "ia_validada";
+}
+
+export interface NarrativeSection {
+  section_id: string;
+  title: string;
+  paragraphs: NarrativeParagraph[];
+}
+
+export interface AiState {
+  used: boolean;
+  provider: string;
+  model: string;
+  masking: boolean;
+  accepted_paragraphs: number;
+  rejected: { section: string; reason: string; text_preview?: string }[];
+  error: string | null;
+}
+
+export interface NarrativeResponse {
+  session_id: string;
+  sheet: string;
+  generated_at: string;
+  mode: "plantillas" | "ia";
+  total_sections: number;
+  total_paragraphs: number;
+  sections: NarrativeSection[];
+  ai_state: AiState;
+}

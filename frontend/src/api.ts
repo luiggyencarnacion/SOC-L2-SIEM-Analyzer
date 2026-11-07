@@ -1,6 +1,8 @@
 // api.ts - Cliente tipado de la API (rutas relativas al proxy /api de Vite).
 import type {
   AnalyzeResponse,
+  AiSettings,
+  AiTestResult,
   CorrelationResponse,
   CoverageResponse,
   DashboardStats,
@@ -8,6 +10,7 @@ import type {
   EventsResponse,
   FindingsResponse,
   MappingEntry,
+  NarrativeResponse,
   OverrideInfo,
   RowDetail,
   UploadResponse,
@@ -155,4 +158,24 @@ export async function getStats(sessionId: string, sheet: string): Promise<Dashbo
   return request<DashboardStats>(
     `/api/sessions/${sessionId}/stats?sheet=${encodeURIComponent(sheet)}`,
   );
+}
+
+// ---------- Fase E: redaccion (plantillas + IA con validacion) ----------
+
+export async function getAiSettings(): Promise<AiSettings> {
+  return request<AiSettings>("/api/ai/settings");
+}
+
+export async function testAiConnection(): Promise<AiTestResult> {
+  return request<AiTestResult>("/api/ai/test", { method: "POST" });
+}
+
+export async function generateNarrative(sessionId: string, sheet?: string): Promise<NarrativeResponse> {
+  const sp = sheet ? `?sheet=${encodeURIComponent(sheet)}` : "";
+  return request<NarrativeResponse>(`/api/sessions/${sessionId}/narrative${sp}`, { method: "POST" });
+}
+
+export async function getNarrative(sessionId: string, sheet?: string): Promise<NarrativeResponse> {
+  const sp = sheet ? `?sheet=${encodeURIComponent(sheet)}` : "";
+  return request<NarrativeResponse>(`/api/sessions/${sessionId}/narrative${sp}`);
 }

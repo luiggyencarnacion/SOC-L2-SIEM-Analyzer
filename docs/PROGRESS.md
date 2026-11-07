@@ -1,6 +1,6 @@
 # PROGRESS.md — Estado del proyecto
 
-Última actualización: fase D implementada (dashboard interactivo; fases 0, A, B1, B2 y C cerradas).
+Última actualización: fase E implementada (plantillas deterministas, adaptadores IA y anti-alucinación; fases 0, A, B1, B2, C y D cerradas).
 
 ## Estado por fase
 
@@ -11,8 +11,8 @@
 | B1 | ✅ implementada — Pendiente: verificación manual del desarrollador | Reglas AUTH-001–005, AUTH-007, PRIV-001/002, EXEC-001–007, PERS-001–003. Motor determinista en `backend/app/detection/` con YAML configurable (`detection/rules/default_rules.yaml`), hallazgos con evidencia por `Log_ID`, afirmaciones Hecho/Inferencia/Hipótesis, cobertura por regla. Absorción AUTH-001→AUTH-002 funcionando (spray del ejemplo: 33 fallos absorbidos, 0 hallazgos AUTH-001). |
 | B2 | ✅ implementada — Pendiente: verificación manual del desarrollador | Reglas LAT-001–004, EXF-001–004, WEB-001–003. LAT-001 anclado a acceso externo (validado con EVT-00188→EVT-00222/225/227/231), LAT-003 exige ≥2 saltos (1 salto → sin hallazgo), LAT-004 `insufficient_data` documentado (requiere línea base, fase H). Endpoints `GET /findings`, `GET /coverage`, `GET /detection/rules`. Frontend: panel de hallazgos (evidencia clickeable que filtra la tabla) y panel de cobertura. |
 | C | ✅ implementada — Pendiente: verificación manual del desarrollador | Correlación, incidentes, scoring y override. Módulo `backend/app/correlation/` (config YAML + scoring + correlador). El Excel de ejemplo produce **6 cadenas** (I-001..I-006, PLAN §14), relaciones "mismo activo", timeline/IoCs/MITRE/kill chain solo observadas, scoring con invariantes del PLAN 7 y override manual con motivo obligatorio. Endpoints `GET /api/sessions/{id}/incidents` y `POST /api/sessions/{id}/overrides`. Frontend: `IncidentsPanel` con override desde la UI y badge de score/override en hallazgos. |
-| D | 🔶 implementada — Pendiente: verificación manual del desarrollador | Dashboard interactivo. Endpoint `GET /api/sessions/{id}/stats` con agregados deterministas (KPIs, timeline por horas/días, tops, SIEM vs calculada, heatmap, MITRE) y filtro temporal `time_from`/`time_to` en `GET /events`. Frontend: navegación por pestañas (Dashboard · Incidentes · Hallazgos · Cobertura · Eventos · Calidad · Alias) y `DashboardPanel` con Recharts; los gráficos filtran (drill-down a hallazgos y tabla de eventos), heatmap hora×día clicable y comparación SIEM vs calculada. |
-| E | pendiente | Plantillas deterministas + IA (sin chat). |
+| D | ✅ implementada — Pendiente: verificación manual del desarrollador | Dashboard interactivo. Endpoint `GET /api/sessions/{id}/stats` con agregados deterministas (KPIs, timeline por horas/días, tops, SIEM vs calculada, heatmap, MITRE) y filtro temporal `time_from`/`time_to` en `GET /events`. Frontend: navegación por pestañas (Dashboard · Incidentes · Hallazgos · Redacción · Cobertura · Eventos · Calidad · Alias) y `DashboardPanel` con Recharts; los gráficos filtran (drill-down a hallazgos y tabla de eventos), heatmap hora×día clicable y comparación SIEM vs calculada. |
+| E | 🔶 implementada — Pendiente: verificación manual del desarrollador | Plantillas deterministas, adaptadores IA y anti-alucinación (PLAN §10). `backend/app/reporting/templates.py` genera toda la redacción sin IA; `backend/app/ai/` con adaptadores REST `httpx` (gemini, anthropic, openai_compatible, ollama; sin SDKs), enmascaramiento reversible para proveedores cloud y validador anti-alucinación (citas `Log_ID`, entidades, horas y cifras ≥3 dígitos verificadas contra la evidencia; párrafo inválido → descarte con motivo + fallback a plantilla). Endpoints `GET /api/ai/settings`, `POST /api/ai/test` (nunca devuelve la clave), `POST/GET /api/sessions/{id}/narrative`. Frontend: pestaña "Redacción" con ajustes (estado de clave oculto + prueba de conexión), generación y párrafos etiquetados Hecho/Inferencia/Hipótesis con citas clickeables. |
 | F | pendiente | Informe completo y PDF. |
 | F2 | pendiente | Chat IA sobre el caso. |
 | G | pendiente | Pulido, README, errores, rendimiento, seguridad. |
@@ -148,23 +148,60 @@
 - El heatmap se hace con tabla HTML en vez de un gráfico de Recharts: control total de accesibilidad (número visible, tooltip, aria-label) y sin librería extra.
 - La navegación por pestañas sustituye el apilado vertical del paso 3: es la "navegación" del criterio de la fase y reduce el scroll con los 7 paneles existentes.
 
+## Fase E — qué quedó hecho
+
+### Backend
+- **`reporting/templates.py`** (plantillas deterministas): redacción completa **sin IA** a partir de los hallazgos e incidentes ya estructurados — resumen ejecutivo (eventos, hallazgos por severidad, incidentes top, calidad de timestamps), textos por hallazgo (regla, severidad/score, afirmaciones Hecho/Inferencia/Hipótesis de la detección, entidades observadas, absorbed_detail, MITRE) y por incidente (banda/score, fases kill chain observadas, timeline, IoCs de la evidencia, notas de alias como Inferencia). Si un hallazgo no tiene evidencia, usa la frase exacta obligatoria: **"No hay evidencia en los logs proporcionados."**
+- **`ai/settings.py`**: `AI_PROVIDER` (none | gemini | anthropic | openai_compatible | ollama), `AI_MODEL`, `AI_BASE_URL`, `AI_API_KEY`, `AI_TEMPERATURE` leídos del `.env` en cada llamada (testeable con monkeypatch). Proveedor **efectivo**: sin modelo, o sin clave en los proveedores cloud, cae a `none` → plantillas. Ollama es local (base por defecto `http://127.0.0.1:11434`).
+- **`ai/providers/`** (adaptadores REST con `httpx`, sin SDKs): `openai_compatible` (`/v1/chat/completions`, Bearer), `anthropic` (`/v1/messages`, `x-api-key`), `gemini` (`generateContent`, clave en cabecera `x-goog-api-key`, nunca en URL) y `ollama` (`/api/chat`). Cada uno con `generate()` (JSON del LLM) y `test_connection()` (ping barato). Errores → `AIProviderError` con mensaje claro en español.
+- **`ai/masking.py`**: enmascaramiento **reversible** para los proveedores cloud (usuarios, hosts, IPs, destinos, URLs/shares/rutas → `[USUARIO_1]`, `[IP_1]`…); los `Log_ID` y timestamps no se enmascaran para que el LLM pueda citar evidencia real. Ollama sin enmascaramiento por defecto (PLAN §10). Restaurado antes de validar.
+- **`ai/validator.py`** (anti-alucinación, independiente del proveedor): el LLM responde JSON `{"paragraphs": [{section, label, text, citations}]}` y el backend valida por sección: (1) cada cita debe existir en los logs cargados **y** pertenecer a la evidencia de esa sección; (2) IPs, URLs y horas mencionadas deben existir en la evidencia; (3) cualquier entidad del caso mencionada fuera de la evidencia de la sección → rechazo; (4) cifras de ≥3 dígitos deben ser verificables en la evidencia o ser totales derivados de la propia sección (los conteos de 1–2 dígitos se toleran como lenguaje natural); (5) etiqueta limitada a Hecho/Inferencia/Hipótesis. JSON inválido → todo descartado. Cada rechazo registra su motivo y la sección cae a su plantilla.
+- **`ai/service.py`**: orquestador `generate_narrative()`. Con `none` → solo plantillas. Con IA: construye el contexto por sección (evidencia + entidades + cifras permitidas), envía **solo datos estructurados** (afirmaciones, entidades, filas de evidencia recortadas, sin prompts libres), temperatura baja desde `.env`, valida y sustituye por plantilla lo rechazado; `ai_state` registra used/accepted/rejected/error/masking.
+- **`api/routes_ai.py`**: `GET /api/ai/settings` (vista pública: nunca incluye la clave, solo `key_configured`), `POST /api/ai/test` (prueba de conexión; con `none` informa que se trabaja por plantillas), `POST /api/sessions/{id}/narrative` (genera y almacena en la sesión en memoria) y `GET .../narrative`. `main.py` registra el router y health pasa a fase E.
+
+### Frontend (`frontend/src`)
+- **Pestaña nueva "Redacción"** (`components/NarrativePanel.tsx`): tarjeta de ajustes IA (proveedor, modelo, estado de la clave —configurada/no configurada, nunca su valor—, temperatura, base URL si aplica) con botón **Probar conexión**; botón Generar/Regenerar redacción; secciones plegables (resumen ejecutivo, cada hallazgo, cada incidente); cada párrafo con chip de etiqueta (Hecho/Inferencia/Hipótesis) y chip de origen (`plantilla` / `IA validada`); citas `Log_ID` clickeables (abren la fila cruda en Eventos); panel de validación con párrafos aceptados/descartados y sus motivos cuando se usa IA.
+- `api.ts`/`types.ts`: `getAiSettings`, `testAiConnection`, `generateNarrative`, `getNarrative` y tipos asociados.
+
+## Validación fase E (25 tests nuevos; suite completa: 112 verdes)
+
+- Ajustes: por defecto `none`/plantillas; con clave configurada `key_configured=True` y el valor del secreto **nunca** aparece en la respuesta; cloud sin clave o sin modelo → modo plantillas.
+- Prueba de conexión: `none` → ok con mensaje de plantillas; cloud sin clave → informa plantillas (sin llamadas).
+- Adaptadores con `httpx.MockTransport` (sin llamadas reales): openai_compatible, anthropic, gemini y ollama devuelven el texto esperado; HTTP 401 → `AIProviderError` con mensaje claro; proveedor desconocido → error.
+- Enmascaramiento reversible roundtrip; los `Log_ID` sobreviven al enmascaramiento; `mask_payload` recursivo.
+- Validador: acepta un párrafo correcto; rechaza cita inexistente, cita fuera de la evidencia de la sección, IP inventada, entidad del caso de otra sección, cifra de ≥3 dígitos no verificable, párrafo sin citas y JSON inválido (con motivo registrado).
+- Plantillas: hallazgo sin evidencia → frase exacta obligatoria.
+- End-to-end con el Excel de ejemplo (`AI_PROVIDER=none`): 44 secciones (resumen + 37 hallazgos + 6 incidentes), 231 párrafos, todos `source=plantilla`, `ai_state.used=False`, y cada párrafo de hallazgo cita solo `Log_ID` de su propia evidencia.
+- IA simulada: respuesta no-JSON → todo cae a plantilla con motivo; respuesta con 1 párrafo válido + 1 inventado → 1 aceptado (`ia_validada`), 1 rechazado, y el resto de secciones conservan la plantilla.
+- Prueba de humo contra la API viva: análisis (715 filas) → `POST /narrative` → modo plantillas, citas reales (p. ej. spray con `EVT-00057…`), sesión de prueba eliminada.
+
+## Decisiones tomadas (fase E)
+
+- El chat de IA se pospone a F2 (PLAN §12): la fase E solo **redacta** secciones del informe; la IA no participa en detección, correlación ni scoring.
+- El validador es independiente del proveedor y valida contra la **evidencia de cada sección**, no contra el caso entero: esto evita el "dato real pero fuera de contexto" (mencionar la víctima de otra cadena en un hallazgo donde no aparece).
+- La tolerancia de cifras de 1–2 dígitos es deliberada (permiten lenguaje natural tipo "2 eventos"); toda cifra de ≥3 dígitos debe existir en la evidencia o ser un total derivado del hallazgo/incidente (score, nº de eventos, etc.).
+- Enmascaramiento reversible mantenido solo en memoria durante la petición; nunca se persiste el mapa ni se envían valores reales a proveedores cloud.
+- La redacción se guarda en la sesión en memoria (`AnalysisResult.narrative`); regenerar la sobrescribe. Sin persistencia en disco (coherente con el resto del análisis).
+- Los adaptadores no registran la clave ni el cuerpo completo de las peticiones en el log; los errores se reportan con mensajes genéricos en español.
+- `.env.example` ya documentaba `AI_*` (fase 0); no hizo falta añadir variables nuevas.
+
 ## Pendientes inmediatos
 
-- Verificación manual de las fases A + B + C + D por el desarrollador (pasos abajo).
+- Verificación manual de las fases A + B + C + D + E por el desarrollador (pasos abajo).
 - Aviso de build: el bundle de Vite supera 500 kB por Recharts; code-splitting queda para la fase G (rendimiento).
 - Si conviene, limpiar restos de `data/uploads/` de sesiones que murieron con la recarga del servidor (git-ignorado, sin riesgo de commit).
-- Al hacer commit (lo hace el desarrollador): sugerencia de mensaje → `fase D: dashboard interactivo con stats deterministas, drill-down y navegacion por pestanas`.
+- Al hacer commit (lo hace el desarrollador): sugerencia de mensaje → `fase E: plantillas deterministas, adaptadores IA y validador anti-alucinacion`.
 
 ## Cómo ejecutar y probar
 
 - Arrancar todo: `.\start.ps1` (backend http://127.0.0.1:8000 · frontend http://127.0.0.1:5173).
-- Tests: `.\test.ps1` → 87 tests verdes (24 fase A + 34 detección/API + 19 correlación/fase C + 10 dashboard/fase D).
-- API docs: http://127.0.0.1:8000/docs (endpoints `/api/detection/rules`, `/api/sessions/{id}/findings`, `/api/sessions/{id}/coverage`, `/api/sessions/{id}/incidents`, `POST /api/sessions/{id}/overrides`, `/api/sessions/{id}/stats`; `/events` admite `time_from`/`time_to`).
+- Tests: `.\test.ps1` → 112 tests verdes (24 fase A + 34 detección/API + 19 correlación/fase C + 10 dashboard/fase D + 25 IA/fase E).
+- API docs: http://127.0.0.1:8000/docs (endpoints `/api/detection/rules`, `/api/sessions/{id}/findings`, `/api/sessions/{id}/coverage`, `/api/sessions/{id}/incidents`, `POST /api/sessions/{id}/overrides`, `/api/sessions/{id}/stats`, `/api/ai/settings`, `POST /api/ai/test`, `POST|GET /api/sessions/{id}/narrative`; `/events` admite `time_from`/`time_to`).
 
 ## Recordatorios
 
 - Regla de oro: todo hallazgo debe tener evidencia con `Log_ID`; si no, frase exacta: "No hay evidencia en los logs proporcionados."
-- La IA no detecta: entra en fase E, y solo redacta a partir de hallazgos deterministas.
+- La IA no detecta (implementado en fase E): solo redacta a partir de hallazgos deterministas y su salida se valida; el chat llega en F2.
 - Commits/push los hace el desarrollador; agentes solo git de lectura.
 
 ## Fase A — qué quedó hecho

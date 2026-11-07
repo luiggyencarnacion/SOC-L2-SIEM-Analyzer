@@ -29,6 +29,8 @@ class AnalysisResult:
     quality: Dict[str, Any] = field(default_factory=dict)
     detection: Dict[str, Any] = field(default_factory=dict)
     correlation: Dict[str, Any] = field(default_factory=dict)
+    # Redaccion de secciones (fase E): plantillas deterministas y/o IA validada.
+    narrative: Optional[Dict[str, Any]] = None
     # Override manual (fase C): "finding:F-001" / "incident:I-002" -> clasificacion + motivo.
     overrides: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
