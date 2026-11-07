@@ -1,0 +1,30 @@
+{
+  "name": "soc-l2-siem-analyzer-frontend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "lint": "echo 'Sin lint configurado todavía'"
+  },
+  "dependencies": {
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-router-dom": "7.18.5",
+    "recharts": "3.10.1",
+    "lucide-react": "1.70.0",
+    "clsx": "2.1.1"
+  },
+  "devDependencies": {
+    "vite": "8.3.6",
+    "@vitejs/plugin-react": "6.2.1",
+    "typescript": "5.9.3",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/node": "26.6.6",
+    "tailwindcss": "4.3.5",
+    "@tailwindcss/vite": "4.3.5"
+  }
+}
