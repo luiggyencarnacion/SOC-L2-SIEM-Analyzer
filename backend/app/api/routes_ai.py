@@ -1,11 +1,22 @@
 # api/routes_ai.py - Endpoints de la fase E: ajustes IA, prueba de conexion y redaccion.
-# PLAN seccion 10: las claves viven solo en .env; la UI nunca las recibe ni las muestra.
+# Post-F: los ajustes (incluida la clave) pueden introducirse desde la UI y viven
+# SOLO en memoria del backend: nunca se devuelven ni se persisten (decision del
+# desarrollador; PLAN seccion 10 anotada en PROGRESS.md).
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from app.ai.base import AIProviderError
-from app.ai.settings import effective_provider, load_ai_settings, public_view
+from app.ai.settings import (
+    SettingsError,
+    clear_runtime_key,
+    clear_runtime_settings,
+    effective_provider,
+    load_ai_settings,
+    public_view,
+    set_runtime_settings,
+)
 from app.services import sessions as store
 
 router = APIRouter(prefix="/api", tags=["ia"])
@@ -15,7 +26,59 @@ router = APIRouter(prefix="/api", tags=["ia"])
 def ai_settings() -> Any:
     """Estado de la IA para la pantalla de ajustes (sin exponer la clave)."""
     settings = load_ai_settings()
-    return public_view(settings)
+    view = public_view(settings)
+    view["settings_source"] = "ui" if _runtime_source() else "env"
+    return view
+
+
+def _runtime_source() -> bool:
+    from app.ai.settings import runtime_is_active
+
+    return runtime_is_active()
+
+
+class AiSettingsUpdate(BaseModel):
+    provider: Optional[str] = Field(default=None, description="none|gemini|anthropic|openai_compatible|ollama")
+    model: Optional[str] = None
+    base_url: Optional[str] = None
+    temperature: Optional[float] = None
+    api_key: Optional[str] = Field(default=None, description="Vacia = conservar la clave actual")
+    clear_key: bool = Field(default=False, description="True = borrar la clave de memoria")
+
+
+@router.post("/ai/settings")
+def update_ai_settings(req: AiSettingsUpdate = Body(...)) -> Any:
+    """Guarda ajustes de IA en RAM del backend (se pierden al reiniciar).
+
+    La clave nunca se devuelve en la respuesta, solo el estado 'key_configured'.
+    """
+    if req.clear_key:
+        clear_runtime_key()
+    try:
+        set_runtime_settings(
+            provider=req.provider,
+            model=req.model,
+            base_url=req.base_url,
+            temperature=req.temperature,
+            # api_key vacia significa "conservar la actual"; None tambien.
+            api_key=req.api_key if (req.api_key or "").strip() else None,
+        )
+    except SettingsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    settings = load_ai_settings()
+    view = public_view(settings)
+    view["settings_source"] = "ui" if _runtime_source() else "env"
+    return view
+
+
+@router.delete("/ai/settings")
+def reset_ai_settings() -> Any:
+    """Restablece todos los ajustes de IA al .env del backend."""
+    clear_runtime_settings()
+    settings = load_ai_settings()
+    view = public_view(settings)
+    view["settings_source"] = "env"
+    return view
 
 
 @router.post("/ai/test")

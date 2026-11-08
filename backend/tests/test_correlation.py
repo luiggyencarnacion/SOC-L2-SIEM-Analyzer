@@ -222,9 +222,11 @@ def test_iocs_extraidos_de_evidencia():
     iocs = out["incidents"][0]["iocs"]
     assert iocs["ips"] == ["198.51.100.7", "203.0.113.50"]
     assert any("/upload.php" in u for u in iocs["urls"])
-    assert "TareaX" in iocs["services_tasks"]
+    assert "drop.example.test" in iocs["hosts"]  # un hostname es host, no dominio
+    assert "TareaX" in iocs["servicios_tareas"]
     assert "\\\\SERV\\finance" in iocs["shares"]
-    assert "ulegal" in iocs["accounts"][0].split("\\")[-1]
+    assert "\\\\SERV\\c$\\x.txt" in iocs["rutas"]
+    assert "ulegal" in iocs["cuentas"][0].split("\\")[-1]
 
 
 def test_sin_hallazgos_devuelve_estructura_vacia():
@@ -272,11 +274,23 @@ def test_integracion_incidentes_estructura_completa():
         assert inc["assets"] and isinstance(inc["iocs"], dict)
         assert inc["kill_chain_phases"], "las fases observadas no deben inventarse ni faltar"
         assert inc["grouping"]["justification"]
+        # Tipos correctos de IoC: ninguna ruta UNC doble como host; sin vacíos ni "-".
+        assert not any("\\" in v for v in inc["iocs"].get("hosts", []))
+        assert not any(v.strip() in ("", "-") for vals in inc["iocs"].values() for v in vals)
     # Los scores de incidente caen en bandas coherentes.
     for inc in body["incidents"]:
         bands = {"Bajo": (0, 39), "Medio": (40, 59), "Alto": (60, 79), "Crítico": (80, 100)}
         lo, hi = bands[inc["band"]]
         assert lo <= inc["score"] <= hi
+
+
+def test_titulos_descriptivos_por_config():
+    """La frase del titulo sale de incident_titles.phrases (config) para la regla ancla."""
+    sid, _ = _upload_and_analyze()
+    incidents = client.get(f"/api/sessions/{sid}/incidents").json()["incidents"]
+    assert any(str(i["title"]).startswith("Password spraying y toma de cuenta") for i in incidents)
+    for inc in incidents:
+        assert not str(inc["title"]).startswith("Cadena de "), inc["title"]
 
 
 def test_override_manual_de_incidente():

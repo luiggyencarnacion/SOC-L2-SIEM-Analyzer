@@ -47,9 +47,15 @@ class BaseAdapter:
             ) from exc
         self.last_status = resp.status_code
         if resp.status_code >= 400:
+            detail = ""
+            try:
+                detail = str(resp.text)[:300]
+            except Exception:
+                pass
             raise AIProviderError(
                 f"El proveedor '{self.name}' respondio HTTP {resp.status_code}."
                 " Revisa el proveedor, el modelo, la clave y la URL base."
+                + (f" Detalle del proveedor: {detail}" if detail else "")
             )
         return resp
 

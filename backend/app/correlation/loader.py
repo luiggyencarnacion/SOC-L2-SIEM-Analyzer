@@ -38,6 +38,7 @@ class CorrelationConfig:
     kill_chain_phase_order: List[str] = field(default_factory=list)
     override_classifications: List[str] = field(default_factory=list)
     override_max_reason_chars: int = 2000
+    incident_title_phrases: Dict[str, str] = field(default_factory=dict)
 
 
 def _as_int(value: Any, where: str) -> int:
@@ -115,6 +116,16 @@ def _validate(data: Any, source: str) -> CorrelationConfig:
     if not classifications:
         raise CorrelationConfigError(f"{source}: overrides.classifications no puede estar vacio.")
 
+    phrases_raw = (data.get("incident_titles") or {})
+    if not isinstance(phrases_raw, dict):
+        raise CorrelationConfigError(f"{source}: 'incident_titles' debe ser un objeto.")
+    if "phrases" in phrases_raw and not isinstance(phrases_raw["phrases"], dict):
+        raise CorrelationConfigError(f"{source}: incident_titles.phrases debe ser un objeto regla -> frase.")
+    phrases = {str(k): str(v) for k, v in (phrases_raw.get("phrases") or {}).items()}
+    for k, v in phrases.items():
+        if not k.strip() or not v.strip():
+            raise CorrelationConfigError(f"{source}: incident_titles.phrases no admite claves o frases vacias.")
+
     return CorrelationConfig(
         window_minutes=window,
         non_linking_user_rules=_as_str_list(data.get("non_linking_user_rules", []), f"{source}: non_linking_user_rules"),
@@ -136,6 +147,7 @@ def _validate(data: Any, source: str) -> CorrelationConfig:
         kill_chain_phase_order=phase_order,
         override_classifications=classifications,
         override_max_reason_chars=_as_int(ov.get("max_reason_chars", 2000), f"{source}: overrides.max_reason_chars"),
+        incident_title_phrases=phrases,
     )
 
 

@@ -78,3 +78,36 @@ kill_chain:
 overrides:
   classifications: [Crítico, Alto, Medio, Bajo, Falso positivo]
   max_reason_chars: 2000
+
+# Frases de titulo del incidente cuando la regla ancla (mayor score) es la
+# indicada: descripciones genericas de actividad, sin senales del archivo
+# cargado. Una regla sin frase aqui usa su nombre de regla.
+incident_titles:
+  phrases:
+    AUTH-002: Password spraying y toma de cuenta
+    AUTH-003: Toma de cuenta tras fallos consecutivos
+    AUTH-004: Acceso externo a activo interno
+    AUTH-005: Acceso remoto por RDP con indicadores anómalos
+    AUTH-007: Uso anómalo de cuenta de servicio
+    PRIV-001: Alta o cambio en cuentas privilegiadas
+    PRIV-002: Asignación anómala de privilegios
+    EXEC-001: Ejecución encubierta de PowerShell
+    EXEC-002: Reconocimiento interno del entorno
+    EXEC-003: Uso de binarios dual-use
+    EXEC-004: Borrado de copias de sombra
+    EXEC-005: Compresión y staging de datos
+    EXEC-006: Binario en ruta no estándar
+    EXEC-007: Ejecución de script anómala
+    PERS-001: Tarea programada creada
+    PERS-002: Servicio instalado con persistencia
+    PERS-003: Ejecución encadenada repetida
+    LAT-001: Movimiento lateral desde acceso externo
+    LAT-002: Acceso a shares SMB sensibles
+    LAT-003: Movimiento lateral multi-salto
+    EXF-001: Envío externo desde proceso inusual
+    EXF-002: Exfiltración por envíos web masivos
+    EXF-003: Subidas periódicas al mismo destino
+    EXF-004: Recolección masiva de datos sensibles
+    WEB-001: Ráfaga de errores HTTP
+    WEB-002: Enumeración de login/admin en el servidor web
+    WEB-003: Webshell / inyección de comandos en servidor web

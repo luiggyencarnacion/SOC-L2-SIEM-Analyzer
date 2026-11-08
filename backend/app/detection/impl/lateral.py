@@ -204,10 +204,10 @@ def anchor_host_key(ev: Dict[str, Any]) -> str:
 
 def lat_004(ctx, rule, state) -> StateTuple:
     # Requiere línea base histórica de destinos por host; no se puede derivar de un export
-    # puntual sin datos previos. Cobertura: insufficient_data (fase H, PLAN seccion 12).
+    # puntual sin datos previos. Cobertura: datos insuficientes.
     return [], "insufficient_data", (
         "requiere una línea base histórica de destinos por host que no se puede derivar del "
-        "archivo exportado (queda pendiente para la fase H)."
+        "archivo exportado con los datos actuales."
     )
 
 

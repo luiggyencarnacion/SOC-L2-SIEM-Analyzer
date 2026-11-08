@@ -14,13 +14,13 @@ const BAND_STYLES: Record<string, string> = {
 };
 
 const IOC_LABELS: Record<string, string> = {
-  ips: "IPs",
-  domains: "Dominios",
+  ips: "IPs públicas",
+  hosts: "Hosts",
   urls: "URLs",
-  files: "Archivos/rutas",
-  shares: "Shares",
-  services_tasks: "Servicios/tareas",
-  accounts: "Cuentas",
+  rutas: "Rutas/archivos",
+  shares: "Shares SMB",
+  servicios_tareas: "Servicios/tareas",
+  cuentas: "Cuentas",
   hashes: "Hashes",
 };
 

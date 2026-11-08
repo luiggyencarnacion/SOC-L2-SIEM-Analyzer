@@ -26,8 +26,13 @@ _NO_EVIDENCE_SENTINELS = ("EVT-", "ROW-", "F-", "I-")
 SYSTEM_PROMPT = (
     "Eres un analista SOC de nivel 2. Redactas parrafos de informe a partir EXCLUSIVAMENTE de los "
     "hallazgos estructurados y la evidencia que se te entrega. No detectas ni inventas: no puedes "
-    "anadir entidades, cifras, horas ni eventos que no esten en los datos entregados. Cada parrafo "
-    "debe citar al menos un Log_ID de la evidencia de su propia seccion. Si un hallazgo no tiene "
+    "anadir entidades, cifras, horas ni eventos que no esten en los datos entregados. Cada seccion "
+    "incluye 'citas_permitidas' (los UNICOS Log_ID que puedes citar) y 'entidades_permitidas' (los "
+    "UNICOS valores que puedes mencionar en esa seccion, junto con los de sus filas de evidencia). "
+    "OBLIGATORIO: el campo 'citations' de cada parrafo debe contener entre 1 y 3 IDs copiados "
+    "LITERALMENTE de 'citas_permitidas' de esa seccion (usa 'citations_sugeridas' si dudas); nunca "
+    "lo dejes vacio y nunca uses IDs de otra seccion. NUNCA reutilices entidades, tokens ni "
+    "citas de otra seccion: cada seccion es independiente. Si un hallazgo no tiene "
     "evidencia, escribe exactamente: \"" + NO_EVIDENCE_PHRASE + "\". Etiqueta cada parrafo como "
     "'Hecho', 'Inferencia' o 'Hipotesis'. Responde SOLO con JSON valido de la forma "
     '{"paragraphs": [{"section": "<id de seccion>", "label": "Hecho", "text": "...", '
@@ -129,6 +134,7 @@ def _contexts_and_payload(
             {"incident_id": i.get("incident_id"), "banda": i.get("band"), "score": i.get("score")}
             for i in incidents
         ],
+        "citas_permitidas": sorted(set(all_evidence_ids))[:30],
     })
 
     # --- hallazgos ---
@@ -157,6 +163,12 @@ def _contexts_and_payload(
             "afirmaciones": f.get("statements") or {},
             "entidades": f.get("entities") or {},
             "evidencia": rows,
+            "citas_permitidas": [r["log_id"] for r in rows],
+            "citations_sugeridas": [r["log_id"] for r in rows][:2],
+            "entidades_permitidas": sorted({
+                str(v) for k in ("users", "hosts", "source_ips", "destinations")
+                for v in ((f.get("entities") or {}).get(k) or [])
+            }),
         })
 
     # --- incidentes ---
@@ -195,6 +207,12 @@ def _contexts_and_payload(
             "iocs": inc.get("iocs") or {},
             "justificacion_agrupacion": (inc.get("grouping") or {}).get("justification"),
             "evidencia": rows,
+            "citas_permitidas": [r["log_id"] for r in rows],
+            "citations_sugeridas": [r["log_id"] for r in rows][:2],
+            "entidades_permitidas": sorted({
+                str(v) for k in ("users", "hosts", "source_ips", "destinations")
+                for v in ((inc.get("assets") or {}).get(k) or [])
+            }),
         })
 
     return contexts, {"secciones": payload_sections}

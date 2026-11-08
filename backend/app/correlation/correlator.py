@@ -147,13 +147,45 @@ def _sorted_phases(phases: Set[str], cfg: CorrelationConfig) -> List[str]:
     return known + extra
 
 
+def _incident_title(findings: List[Dict[str, Any]], cfg: "CorrelationConfig") -> str:
+    """Titulo descriptivo y determinista: regla ancla (mayor score) + entidad principal.
+
+    La frase por regla ancla sale de `incident_titles.phrases` (config.yaml);
+    si no hay frase, se usa el nombre de la regla. La entidad principal es el
+    host mas compartido; si no hay, la cuenta; si no, la IP de origen. Nunca
+    inventa texto: solo frases de config y entidades observadas.
+    """
+    if not findings:
+        return "Incidente sin hallazgos"
+    anchor = max(findings, key=lambda f: (f.get("score") or 0))
+    ents = anchor.get("entities") or {}
+    hosts = [str(h) for h in (ents.get("hosts") or []) if str(h).strip() not in ("", "-")]
+    users = [str(u) for u in (ents.get("users") or []) if str(u).strip() not in ("", "-")]
+    ips = [str(i) for i in (ents.get("source_ips") or []) if str(i).strip() not in ("", "-")]
+    principal = hosts[0] if hosts else (users[0] if users else (ips[0] if ips else ""))
+    phrase = cfg.incident_title_phrases.get(str(anchor.get("rule_id") or ""), "")
+    lead = phrase or str(anchor.get("rule_name") or anchor.get("rule_id") or "Hallazgo")
+    title = f"{lead} en {principal}" if principal else lead
+    return title[:90]
+
+
 def _extract_iocs(evidence_events: List[Dict[str, Any]]) -> Dict[str, List[str]]:
-    """IoCs deterministas desde los eventos de evidencia del incidente (PLAN 4.1)."""
+    """IoCs deterministas desde los eventos de evidencia del incidente.
+
+    Tipos correctos: los hosts no son dominios; se excluyen valores vacios o "-".
+    """
     iocs: Dict[str, Set[str]] = {
-        "ips": set(), "domains": set(), "urls": set(),
-        "files": set(), "shares": set(), "services_tasks": set(),
-        "accounts": set(), "hashes": set(),
+        "ips": set(), "hosts": set(), "urls": set(),
+        "rutas": set(), "shares": set(), "servicios_tareas": set(),
+        "cuentas": set(), "hashes": set(),
     }
+
+    def _clean(value: Any) -> Optional[str]:
+        s = str(value or "").strip()
+        if not s or s == "-":
+            return None
+        return s
+
     for ev in evidence_events:
         if not isinstance(ev, dict):
             continue
@@ -163,26 +195,37 @@ def _extract_iocs(evidence_events: List[Dict[str, Any]]) -> Dict[str, List[str]]
         dip, dscope = validate_ip(ev.get("destination_ip"))
         if dip and dscope == "public":
             iocs["ips"].add(dip)
-        dst_host = ev.get("destination_host")
-        if dst_host and not dip:
-            iocs["domains"].add(str(dst_host))
+        dst_host = _clean(ev.get("destination_host"))
+        # Las rutas UNC de share (\\servidor\recurso) no son hosts: van a shares
+        # con el valor completo; un hostname nunca se duplica como share.
+        if dst_host and "\\" in dst_host:
+            iocs["shares"].add(dst_host)
+        elif dst_host:
+            iocs["hosts"].add(dst_host)
+        host_raw = _clean(ev.get("host_raw"))
+        if host_raw:
+            iocs["hosts"].add(host_raw)
         if ev.get("url_path"):
-            base = str(dst_host or ev.get("destination_raw") or "").strip()
+            base = _clean(dst_host or ev.get("destination_raw") or "")
             url = f"{base}{ev['url_path']}" if base else str(ev["url_path"])
             iocs["urls"].add(url)
-        for field in ("file_path",):
-            if ev.get(field):
-                iocs["files"].add(str(ev[field]))
-        if ev.get("share"):
-            iocs["shares"].add(str(ev["share"]))
+        fp = _clean(ev.get("file_path"))
+        if fp:
+            iocs["rutas"].add(fp)
+        share = _clean(ev.get("share"))
+        if share:
+            iocs["shares"].add(share)
         for field in ("task_name", "service_name"):
-            if ev.get(field):
-                iocs["services_tasks"].add(str(ev[field]))
-        if ev.get("user_raw"):
-            iocs["accounts"].add(str(ev["user_raw"]))
+            v = _clean(ev.get(field))
+            if v:
+                iocs["servicios_tareas"].add(v)
+        user = _clean(ev.get("user_raw"))
+        if user:
+            iocs["cuentas"].add(user)
         for field in ("sha256", "sha1", "md5", "hash"):
-            if ev.get(field):
-                iocs["hashes"].add(str(ev[field]))
+            v = _clean(ev.get(field))
+            if v:
+                iocs["hashes"].add(v)
     return {k: sorted(v)[:_IOC_LIMIT] for k, v in iocs.items()}
 
 
@@ -254,7 +297,7 @@ def build_incident(
 
     return {
         "incident_id": incident_id,
-        "title": f"Cadena de {len(members)} hallazgo(s) iniciada por {findings[0].get('rule_id')}",
+        "title": _incident_title(findings, cfg),
         "findings": [f.get("finding_id") for f in findings],
         "score": score,
         "band": band_for(score, cfg),

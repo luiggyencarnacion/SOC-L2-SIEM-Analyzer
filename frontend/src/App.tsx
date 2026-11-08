@@ -17,14 +17,16 @@ import { CoveragePanel } from "./components/CoveragePanel";
 import { IncidentsPanel } from "./components/IncidentsPanel";
 import { DashboardPanel } from "./components/DashboardPanel";
 import { NarrativePanel } from "./components/NarrativePanel";
+import { ReportPanel } from "./components/ReportPanel";
 
 type Step = "upload" | "mapping" | "table";
-type View = "dashboard" | "incidents" | "findings" | "coverage" | "events" | "quality" | "aliases" | "narrative";
+type View = "dashboard" | "incidents" | "findings" | "coverage" | "events" | "quality" | "aliases" | "narrative" | "report";
 
 const VIEWS: { id: View; label: string }[] = [
   { id: "dashboard", label: "Dashboard" },
   { id: "incidents", label: "Incidentes" },
   { id: "findings", label: "Hallazgos" },
+  { id: "report", label: "Informe" },
   { id: "narrative", label: "Redacción" },
   { id: "coverage", label: "Cobertura" },
   { id: "events", label: "Eventos" },
@@ -227,6 +229,15 @@ export default function App() {
 
             {view === "narrative" && (
               <NarrativePanel
+                sessionId={session.session_id}
+                sheet={sheet}
+                onError={showError}
+                onOpenEvidence={openEvidence}
+              />
+            )}
+
+            {view === "report" && (
+              <ReportPanel
                 sessionId={session.session_id}
                 sheet={sheet}
                 onError={showError}

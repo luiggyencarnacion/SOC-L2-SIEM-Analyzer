@@ -64,10 +64,10 @@ def _get_stats(res: dict, params: dict | None = None) -> dict:
     return r.json()
 
 
-def test_health_is_fase_e():
+def test_health_is_fase_f():
     r = client.get("/api/health")
     assert r.status_code == 200
-    assert r.json()["fase"] == "E"
+    assert r.json()["fase"] == "F"
 
 
 def test_stats_shape_and_consistency(analyzed):

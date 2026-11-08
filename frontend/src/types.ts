@@ -343,6 +343,7 @@ export interface AiSettings {
   timeout_seconds: number;
   mode: "plantillas" | "ia";
   providers_available: string[];
+  settings_source?: "ui" | "env";
 }
 
 export interface AiTestResult {
@@ -351,6 +352,15 @@ export interface AiTestResult {
   effective_provider: string;
   mode: "plantillas" | "ia";
   detail: string;
+}
+
+export interface AiSettingsUpdate {
+  provider?: string;
+  model?: string;
+  base_url?: string;
+  temperature?: number;
+  api_key?: string; // vacia = conservar la actual
+  clear_key?: boolean;
 }
 
 export interface NarrativeParagraph {
@@ -385,4 +395,52 @@ export interface NarrativeResponse {
   total_paragraphs: number;
   sections: NarrativeSection[];
   ai_state: AiState;
+}
+
+// ---------- Fase F: informe completo, PDF y exportaciones ----------
+
+export interface ReportParagraph {
+  label: string;
+  text: string;
+  citations: string[];
+  source: "plantilla" | "ia_validada" | "manual";
+}
+
+export interface ReportTable {
+  table_id: string;
+  title: string;
+  columns: { key: string; label: string }[];
+  rows: Record<string, unknown>[];
+}
+
+export interface ReportSection {
+  number: string;
+  section_id: string;
+  title: string;
+  kind: "texto" | "tabla" | "anexo" | "contenedor" | "hallazgo" | "incidente" | "resumen" | "plan";
+  paragraphs: ReportParagraph[];
+  tables: ReportTable[];
+  editable: boolean;
+  edited: boolean;
+  edited_at: string | null;
+  parent: string | null;
+  level: number;
+  break_before?: boolean;
+  landscape?: boolean;
+  cards?: { label: string; value: string | number; hint?: string }[];
+  charts?: string[];
+  meta?: Record<string, unknown>;
+}
+
+export interface ReportResponse {
+  session_id: string;
+  sheet: string;
+  file_name?: string;
+  generated_at: string;
+  generated_at_human?: string;
+  total_sections: number;
+  sections: ReportSection[];
+  no_evidence_phrase: string;
+  meta?: { cliente: string; analista: string };
+  band_colors?: Record<string, string>;
 }

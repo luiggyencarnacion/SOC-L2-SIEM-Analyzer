@@ -1,6 +1,6 @@
 # PROGRESS.md — Estado del proyecto
 
-Última actualización: fase E implementada (plantillas deterministas, adaptadores IA y anti-alucinación; fases 0, A, B1, B2, C y D cerradas).
+Última actualización: fase F implementada (informe completo, PDF con portada/índice/paginación y exportaciones CSV/JSON; fases 0, A, B1, B2, C, D y E cerradas). Post-F: ajustes de IA editables desde la UI (clave solo en memoria) + **dos rondas de pulido de presentación del informe** (ver "Pulido 2 de presentación del informe" al final).
 
 ## Estado por fase
 
@@ -13,7 +13,7 @@
 | C | ✅ implementada — Pendiente: verificación manual del desarrollador | Correlación, incidentes, scoring y override. Módulo `backend/app/correlation/` (config YAML + scoring + correlador). El Excel de ejemplo produce **6 cadenas** (I-001..I-006, PLAN §14), relaciones "mismo activo", timeline/IoCs/MITRE/kill chain solo observadas, scoring con invariantes del PLAN 7 y override manual con motivo obligatorio. Endpoints `GET /api/sessions/{id}/incidents` y `POST /api/sessions/{id}/overrides`. Frontend: `IncidentsPanel` con override desde la UI y badge de score/override en hallazgos. |
 | D | ✅ implementada — Pendiente: verificación manual del desarrollador | Dashboard interactivo. Endpoint `GET /api/sessions/{id}/stats` con agregados deterministas (KPIs, timeline por horas/días, tops, SIEM vs calculada, heatmap, MITRE) y filtro temporal `time_from`/`time_to` en `GET /events`. Frontend: navegación por pestañas (Dashboard · Incidentes · Hallazgos · Redacción · Cobertura · Eventos · Calidad · Alias) y `DashboardPanel` con Recharts; los gráficos filtran (drill-down a hallazgos y tabla de eventos), heatmap hora×día clicable y comparación SIEM vs calculada. |
 | E | 🔶 implementada — Pendiente: verificación manual del desarrollador | Plantillas deterministas, adaptadores IA y anti-alucinación (PLAN §10). `backend/app/reporting/templates.py` genera toda la redacción sin IA; `backend/app/ai/` con adaptadores REST `httpx` (gemini, anthropic, openai_compatible, ollama; sin SDKs), enmascaramiento reversible para proveedores cloud y validador anti-alucinación (citas `Log_ID`, entidades, horas y cifras ≥3 dígitos verificadas contra la evidencia; párrafo inválido → descarte con motivo + fallback a plantilla). Endpoints `GET /api/ai/settings`, `POST /api/ai/test` (nunca devuelve la clave), `POST/GET /api/sessions/{id}/narrative`. Frontend: pestaña "Redacción" con ajustes (estado de clave oculto + prueba de conexión), generación y párrafos etiquetados Hecho/Inferencia/Hipótesis con citas clickeables. |
-| F | pendiente | Informe completo y PDF. |
+| F | 🔶 implementada — Pendiente: verificación manual del desarrollador | Informe completo (PLAN §9: 14 secciones numeradas + 3 anexos), edición y regeneración de secciones por el analista, PDF A4 con Playwright/Chromium (portada, índice, numeración de páginas, tablas y evidencia con `Log_ID`) y exportaciones IoCs CSV (anti-inyección de fórmulas) y hallazgos JSON. Pestaña nueva "Informe" en la UI. |
 | F2 | pendiente | Chat IA sobre el caso. |
 | G | pendiente | Pulido, README, errores, rendimiento, seguridad. |
 | H (opcional) | pendiente | AUTH-006, AUTH-008, BASE-001, BASE-002 (LAT-004 también quedaría aquí). |
@@ -185,24 +185,194 @@
 - Los adaptadores no registran la clave ni el cuerpo completo de las peticiones en el log; los errores se reportan con mensajes genéricos en español.
 - `.env.example` ya documentaba `AI_*` (fase 0); no hizo falta añadir variables nuevas.
 
+## Ajustes de IA desde la UI (post-F)
+
+Decisión del desarrollador (documentada como desviación puntual del PLAN §10): la clave de IA **no** se introduce por `.env`, sino por la UI, y vive **solo en memoria del backend** — nunca se persiste en disco ni en el repo, nunca se devuelve por la API y se pierde al reiniciar `start.ps1`.
+
+### Backend
+- **`ai/settings.py`**: override en RAM con lock (`set_runtime_settings`, `clear_runtime_key`, `clear_runtime_settings`, `runtime_is_active`) y validación estricta (proveedor de la lista, temperatura 0–2, límites de longitud; `SettingsError` → HTTP 400). `load_ai_settings()` fusiona: **override de la UI > `.env`**.
+- **`api/routes_ai.py`**: `POST /api/ai/settings` (guarda ajustes; `api_key` vacía = conservar la actual; `clear_key: true` = borra la clave de RAM y cae a la del `.env` si existiera), `DELETE /api/ai/settings` (restablece todo al `.env`). `GET /api/ai/settings` añade `settings_source: "ui" | "env"`. La clave jamás aparece en ninguna respuesta (solo `key_configured`).
+- Fix cosmético heredado de la fase E: `get_adapter` ahora fija `adapter.name` (el campo dataclass `name` de `BaseAdapter` ignoraba el atributo de clase de cada adaptador y los errores decían `proveedor ''`).
+
+### Frontend
+- La tarjeta "Ajustes de IA" de la pestaña **Redacción** ahora es editable: proveedor (desplegable), modelo, base URL (solo para `openai_compatible`/`ollama`), temperatura y clave (campo tipo password, placeholder "sin cambios" si ya hay una). Botones: **Configurar / Guardar ajustes / Probar conexión / Borrar clave / Restablecer (.env)**; badge "ajustes de esta sesión (UI)" cuando hay override.
+
+### Validación (8 tests nuevos; suite completa: 138 verdes)
+- POST activa IA en RAM (`mode: ia`, `settings_source: ui`) y la clave **no** aparece en ninguna respuesta; clave vacía en segunda pasada conserva la anterior; `clear_key` cae a la clave del `.env` (o a "no configurada"); `DELETE` vuelve al `.env`; validaciones 400 (proveedor inválido, temperatura fuera de rango); garantía de no-persistencia (el `.env` no cambia tras guardar ajustes); la redacción usa los ajustes de RAM (adaptador simulado; respuesta inválida del LLM cae a plantillas).
+
+### Ajustes posteriores (misma sesión, con la suite en 144 verdes)
+- **Parser robusto de la respuesta del LLM** (`ai/validator.py`): los LLM reales a menudo envuelven el JSON en vallas ```json con texto introductorio/final o cortan la respuesta; `parse_llm_payload` ahora tolera vallas en cualquier posición, extrae el objeto más externo y, si el JSON está truncado, reporta el motivo concreto ("parece truncada… sube AI_MAX_OUTPUT_TOKENS"). El motivo de rechazo del validador incluye el detalle del error (antes solo el tipo de excepción). +6 tests (directo, vallas, vallas con texto alrededor, JSON con texto sin vallas, truncado, falta `paragraphs`).
+- **`AI_MAX_OUTPUT_TOKENS` por defecto 2000 → 4000** (`ai/settings.py`): con 44 secciones en una sola llamada, 2000 tokens truncaba el JSON y caía todo a plantillas.
+- **Selector cualitativo de temperatura en la UI** (`NarrativePanel.tsx`): el campo numérico se sustituye por un desplegable con perfiles — *Muy precisa (0), Precisa — recomendada (0.1), Equilibrada (0.3), Creativa (0.7), Muy creativa (1), Personalizada…* (solo si elige "Personalizada" aparece el campo numérico 0–2). En modo vista se muestra el perfil ("Precisa (0.1)"), no el número crudo. Sin cambios de API.
+- **Aviso operativo**: los ajustes de IA viven en RAM; editar código del backend (con `--reload`) o reiniciar `start.ps1` los borra y hay que volver a pegar la clave en la UI. Es la contrapartida de "sin secretos en disco".
+
+### Depuracion con IA real contra OpenRouter (misma sesion, suite en 146 verdes)
+
+El primer intento end-to-end del usuario con OpenRouter revelo una cadena de problemas reales que las pruebas con adaptadores simulados no podian detectar:
+
+1. **Respuesta del LLM no parseable**: los modelos envuelven el JSON en vallas ```json con texto alrededor; el parser solo lo toleraba si el texto empezaba/terminaba exactamente en las vallas. -> `parse_llm_payload` ahora tolera vallas en cualquier posicion, extrae el objeto mas externo y distingue JSON truncado (con motivo concreto). El motivo de rechazo incluye el detalle de la excepcion.
+2. **Modelo con razonamiento (`z-ai/glm-5.3-flash`)**: via OpenRouter el razonamiento es obligatorio para ese endpoint (`reasoning: {"enabled": false}` -> HTTP 400 "Reasoning is mandatory"); y con el payload completo (45k tokens de entrada) el razonamiento consume TODO el presupuesto (30k tokens, 8 minutos) dejando `content` vacio. -> Se quito el parametro, se subio `AI_MAX_OUTPUT_TOKENS` a 6000 y el adaptador ahora: elimina bloques `<think >...` incrustados y da error claro y especifico si `content` llega vacio con `reasoning` presente. Conclusion documentada: **para este flujo se necesita un modelo de chat sin razonamiento** (p. ej. `openai/gpt-4o-mini`); los modelos tipo razonador se obsesionan con payloads grandes.
+3. **Bugs de integracion fase E (solo visibles con IA real)**: `context_from_pool` leia `user_raw/host_raw/source_ip/timestamp_parsed` pero las filas de `_evidence_rows` usan claves en espanol (`usuario/host/ip_origen/timestamp`) -> el pool de entidades y horas de cada seccion estaba VACIO y el validador rechazaba toda entidad/hora real. -> Ahora acepta ambos juegos de claves (+2 tests de regresion).
+4. **Cumplimiento del modelo**: el LLM no rellenaba `citations` y reutilizaba entidades entre secciones. -> El payload ahora entrega por seccion `citas_permitidas`, `citations_sugeridas` y `entidades_permitidas` explicitas, y el system prompt exige copiar 1-3 IDs literales de esa seccion (nunca citations vacio).
+5. **Timeout**: la llamada real tarda 60-90s; el timeout por defecto 30s la cortaba. -> `AI_TIMEOUT_SECONDS` por defecto ahora 180.
+
+**Resultado final verificado end-to-end via la API viva** (OpenRouter + `openai/gpt-4o-mini`, enmascaramiento activo): `mode: ia`, **32 parrafos "IA validada"** de 38 solicitados; los 6 rechazados (hora mal citada, IPs de otra seccion, cita cruzada, cifra no verificable) cayeron a plantilla determinista — el validador anti-alucinacion trabajando como esta diseñado.
+
+### Layout del PDF optimizado (misma sesion, suite en 147 verdes)
+- Antes cada seccion forzaba pagina nueva: con 58 secciones el informe tenia ~84 paginas y los hallazgos dejaban media pagina en blanco. Ahora **solo las secciones "capitulo"** (portada, resumen, metodologia, tabla resumen, evidencias, timeline/MITRE, criticidad, impacto, plan de accion, IoCs, recomendaciones, limitaciones y anexos) fuerzan pagina nueva; **los hallazgos e incidentes fluyen uno debajo del otro** con subtitulo compacto. Ademas: los parrafos no se parten entre paginas (`break-inside: avoid`), los titulos no quedan huerfanos al pie (`break-after: avoid`) y las cabeceras de tablas largas se repiten en cada pagina (`thead: table-header-group`). Resultado: **84 -> 55 paginas (-34%)** con el mismo contenido, verificado via API viva y con test de regresion que cuenta los saltos (1 tras la portada + 1 por capitulo, cero por hallazgo/incidente).
+
+### Informe jerarquico e indice clicable (misma sesion, suite en 148 verdes)
+- **Estructura jerarquica** (`reporting/report.py`): "5. Hallazgos" e "6. Incidentes" son ahora **capitulos contenedor** (kind `contenedor`, no editables, con parrafo introductorio) y cada hallazgo/incidente es un **subpunto** (`5.1`, `5.2`…, `6.1`…, con `parent` y `level` en cada seccion). Los `section_id` se mantienen estables (`hallazgo:F-001`), por lo que las ediciones/regeneraciones del analista siguen funcionando; editar o regenerar un contenedor devuelve 400. Numeracion jerarquica ("5", "5.1") en API, UI y PDF.
+- **Indice clicable** (`reporting/pdf.py`): cada seccion lleva un `id` HTML estable (`sec-hallazgo-F-001`, con `:` normalizado) y el indice son enlaces `<a href="#...">`; **Chromium los convierte en anotaciones `/Subtype /Link` con destino interno en el PDF** (verificado: 60 enlaces). Sin dependencias nuevas. El indice muestra la jerarquia (subpuntos indentados).
+- **Flujo compacto por bloques (Opcion C)**: solo los capitulos (nivel 1) fuerzan pagina; cada hallazgo/incidente es un bloque fluido con `break-inside: avoid` (no se parte entre paginas). 57 paginas frente a las ~84 originales.
+- **Frontend** (`ReportPanel.tsx`): arbol anidado (contenedor -> subpuntos con estilo propio), cabecera compartida, boton Editar solo en secciones editables, filtro por capitulo o subpunto.
+- Tests: jerarquia (parent/level/numeracion/contenedores no editables), indice clicable (hrefs == anchors), `/Link` presente en el PDF real, edicion de contenedor -> 400.
+
+## Pulido de presentación del informe (post-F2)
+
+Ciclo completo de presentación del informe/PDF tras revisión A/B/C del desarrollador (diseño, jerga fuera y cambios de contenido). **Sin cambios de detección ni scoring** (la duda I-005 se mostró al desarrollador y queda a su decisión).
+
+### Contenido (`reporting/report.py`, reescrito)
+- **Portada dentro del PDF**, ya no como sección del informe: título, nombre real del archivo, cliente/analista editables, fecha de generación (dd/mm/aaaa hh:mm) y clasificación "Confidencial – Uso interno". Sin tabla duplicada de "datos del caso".
+- **Resumen ejecutivo de 1 página**: 4 tarjetas KPI (eventos, hallazgos, incidentes, banda máxima), donut SVG de hallazgos por banda final, y 1 párrafo por incidente con citas `Log_ID`.
+- **Hallazgos como tarjetas** (capítulo con 2 columnas CSS): cada hallazgo con banda final (score tras factores/bonus, nunca la severidad base), meta (banda/score/regla/eventos/Log_IDs), entidades y afirmaciones etiquetadas. Capítulo con barras MITRE SVG.
+- **Incidentes**: portadilla por incidente con cronología SVG de línea temporal, fases kill chain observadas, IoCs retipeados y activos.
+- **Plan de acción por incidente** (cambio C del checklist): tabla Investigar/Contener/Remediar con prioridad, owner y SLA por fase — editable por el analista como el resto.
+- **Títulos descriptivos de incidentes** (`correlation/correlator.py`): "entidad anómala + actividad + anclaje" (p. ej. "Cuenta de servicio/helpdesk interactiva u origen raro - APP-SRV01"); nunca el patrón viejo "Cadena de N hallazgo(s)…".
+- **IoCs re-categorizados**: hosts/rutas/cuentas/servicios_tareas (sin "-" ni vacíos); etiquetas en español en API, CSV y UI.
+- **Jerga eliminada**: estados de cobertura en español (Ejecutada / Ejecutada sin hallazgos / Datos insuficientes / Omitida por campos faltantes) en informe, coverage UI y CSV; "lat_004" renombrado en `detection/impl/lateral.py`; sin "fase H"/"PLAN 4.3" en textos del informe.
+- **Anexos A–D** (antes numerados): calidad, cobertura, evidencias deduplicadas (una fila por `Log_ID` con el texto literal completo) y alias.
+- **Meta de portada editable**: campo `report_meta` en `AnalysisResult` + `PUT /api/sessions/{id}/report/meta` (cliente/analista).
+
+### Diseño (`reporting/pdf.py`, reescrito; `reporting/charts.py` nuevo)
+- **Chips de severidad con color Y texto** (Crítico rojo / Alto naranja / Medio amarillo / Bajo verde), clases CSS `critico/alto/medio/bajo`.
+- **Gráficos SVG puros** (`charts.py`): donut de bandas, cronología por incidente, barras MITRE — sin librerías nuevas.
+- **Tablas**: anchos de columna fijos (`colgroup`), columnas monoespaciadas para IDs/LOG_IDs (`keep-all`), formato corto de tiempo dd/mm hh:mm:ss, cabecera repetida en cada página y filas sin cortar (`break-inside: avoid`).
+- **Los gráficos SVG puros y los chips** están listados en la sección de diseño.
+- **Anexos en horizontal** (`@page apaisada`) con `prefer_css_page_size`.
+- **Solo 5 saltos forzados**: tras portada, tras índice (antes del resumen), antes de hallazgos y antes de anexos; hallazgos a 2 columnas dentro del capítulo, flujo continuo en el resto.
+- **Índice clicable a 2 niveles con números de página** (2 pasadas de Chromium): la 1.ª renderiza y extrae las páginas reales por named destinations; la 2.ª inserta el número. Los hallazgos NO se listan individualmente (solo capítulos + subpuntos de incidentes).
+- Tipografía única (una familia), texto alineado a la izquierda, tildes correctas en todos los títulos.
+
+### Frontend (misma sesión)
+- `ReportPanel.tsx`: portada editable (cliente/analista, botón "Guardar portada"), mínimo de secciones con `kind resumen/plan/hallazgo/incidente/contenedor`, tarjetas y meta visibles, nota de qué incluye el PDF.
+- `IncidentsPanel.tsx`/`api.ts`/`types.ts`: etiquetas IoC nuevas en español.
+- `api.ts`/`types.ts`: `saveReportMeta` (PUT /report/meta), `file_name`/`meta`/`band_colors`/`cards`/`charts`/`landscape`/`break_before` en los tipos.
+
+### Validación verificación PDF (API viva, mismo día)
+- `data/exports/informe_verificacion_manual.pdf`: **25 páginas** con el Excel de ejemplo (antes ~30): portada, índice clicable (126 enlaces), KPIs+donut, hallazgos en tarjetas 2-col, incidentes con cronología SVG, plan de acción, IoCs y anexos A–D (evidencias y alias en horizontal).
+- Suite: **149 tests verdes** (+1 nuevo `test_report_polish_requirements`: bandas finales, jerga fuera, KPIs/donut, plan Investigar/Contener/Remediar, cobertura en español, meta de portada, anexo deduplicado landscape). Los tests de informe re-escritos a la estructura jerárquica nueva (anexos A–D, capítulos 4/5, hallazgos e incidentes a subpuntos).
+
+### Pulido 2 de presentación (misma sesión; suite en 150 verdes)
+
+Correcciones a partir del PDF de referencia del desarrollador (`informe_Cuarta_Version.pdf`), solo presentación/plantillas — sin cambios de detección ni scoring:
+
+- **HTML crudo fuera de los párrafos (bug crítico)**: `_render_para` devolvía `str` y Jinja2 con autoescape lo escapaba → TODOS los párrafos del PDF se veían como `<p class="para"><span class="lbl lbl-Hecho">…`. Ahora devuelve `Markup` (regresión cubierta por test: el HTML renderizado no contiene `&lt;p` y sí contiene el elemento real).
+- **"Espacio para logo" eliminado** (A11): sin caja ni CSS de logo; la clasificación ocupa la cabecera de la portada.
+- **Resumen ejecutivo a 1 página con 1 párrafo de 3 frases por incidente (A2)**: antes, si existía redacción IA/plantilla del capítulo, sustituía los blurbs y el resumen quedaba con un solo párrafo. Ahora la redacción del capítulo va de intro y los blurbs por incidente están SIEMPRE presentes (citas deduplicadas de la evidencia del propio incidente; test verifica ≥3 frases y citas ∈ evidencia del incidente).
+- **Títulos de incidente por config (C)**: nuevo bloque `incident_titles.phrases` en `correlation/config.yaml` (frase genérica por regla ancla, editable, sin señales del ejemplo; con frase la usa el título, sin ella el nombre de la regla). Resultado en el ejemplo: "Password spraying y toma de cuenta en DC-01", "Borrado de copias de sombra en WS-023", "Exfiltración por envíos web masivos en WS-018", etc. `CorrelationConfig` carga y valida el bloque.
+- **IoCs (C)**: las rutas UNC de share (`\\FS-SRV01\Finance`) ya no se listan como Hosts (van solo a Shares SMB con el valor completo); sin vacíos ni "-" (test en la suite de correlación).
+- **Citas deduplicadas**: las listas de Log_ID por párrafo ya no repiten IDs (Impacto y demás; test de regresión).
+- **Volumen legible**: bytes_out con separador de miles y equivalente MB ("506.611.116 bytes (≈483,4 MB)").
+- **Anexo D sin filas vacías**: las relaciones de alias sin clave canónica ni valores observados ya no se listan ("Cuentas — sí" en la Cuarta Versión).
+- **Dona verificada por código** (artefacto de extracción de texto causaba duda): leyenda correcta por banda final — en el ejemplo 12 Crítico / 12 Alto / 13 Medio (37 hallazgos); test añade la comprobación de la leyenda contra los conteos reales.
+- PDF de verificación regenerado (modo plantilla, sin IA): **25 páginas** (`data/exports/informe_verificacion_manual.pdf`), 126 enlaces de índice, sin jerga, sin HTML crudo, sin "logo"; el resumen ocupa exactamente la página 3.
+
+### Pulido 3: footer solapado y cronologias con marcas ocultas (misma sesión; suite en 151 verdes)
+
+A partir de la Quinta Versión del desarrollador (`informe_Quinta_Version.pdf`, 23 págs):
+
+- **Footer superpuesto al contenido (bug de impresión)**: el CSS declaraba `@page { margin: 0 }` y **el margen de la CSS gana sobre el de Playwright** → el pie de Chromium ("Página X de Y") se imprimía dentro de la franja del contenido y el texto/la gráfica del resumen lo pisaban. Ahora el CSS lleva márgenes reales (`10mm arriba / 14mm abajo`, también en horizontal) y Playwright usa los mismos valores: el contenido nunca entra en la banda del pie. La portada deja de usar `height: 96vh` (no fiable con márgenes reales).
+- **Puntos invisibles en las cronologías**: varios hallazgos del mismo incidente comparten el instante exacto (p. ej. las ejecuciones encadenadas de PERS-003) y los círculos se dibujaban superpuestos en la misma coordenada. Ahora `incident_timeline_svg` **apila** las marcas coincidentes con desfase vertical determinista (0, ±10, ±20 px) y muestra un contador **"×N"** sobre cada grupo; el `viewBox` crece (66→88) y el tooltip incluye el Log_ID, la regla y la hora. Test de regresión: 3 círculos, offsets distintos y badge.
+- **Compensación de densidad (solo CSS)**: espaciados de párrafos/tarjetas/tablas/KPIs ligeramente más compactos para absorber la altura perdida por los márgenes ("150" → "151" tests no afectados).
+- Impacto en páginas: 23 (Quinta Versión, con solapamiento) -> **26 sin solapamiento**. El recorte hacia el objetivo 15–20 sigue abierto: requiere decidir en anexos (evidencia completa es ~6 págs en horizontal).
+
+### Pulido 3b: dona con leyenda recortada y titulo pisado (misma sesión; suite en 151 verdes)
+
+Captura del desarrollador del resumen ejecutivo: la leyenda mostraba "1 / 1 / 1" y el título quedaba detrás del aro.
+
+- **Leyenda recortada (causa geométrica)**: la columna de cifras la ancla `text-anchor="end"` en x=340 **fuera del viewBox (ancho 330)** → Chromium recortaba el último dígito ("12"→"1", "13"→"1"). Ahora la cifra termina en x=320 y el viewBox es 350 de ancho. Leyenda verificada visualmente (render a PNG): 12 Crítico / 12 Alto / 13 Medio.
+- **Título pisado por el aro**: el círculo (top y=12) invadía la línea del título (baseline y=18); el aro baja a cy=100 (top y=22) y el título sube a y=16.
+- Verificación visual de las 3 gráficas (dona, barras MITRE, cronologías) con captura PNG standalone antes de regenerar el PDF: colores correctos por banda, barras con técnica+conteo, cronologías con marcas apiladas y badges ×N.
+- `data/exports/informe_verificacion_manual.pdf` regenerado: 26 páginas, 126 enlaces, suite 151 verdes.
+
+### Pulido 3c: chip "Hecho" fuera de los párrafos (misma sesión; suite en 151 verdes)
+
+Petición del desarrollador: cada párrafo arrancaba con la palabra "Hecho" (chip de marca de afirmación).
+
+- Causa: `_render_para` renderizaba siempre el chip de etiqueta; toda la plantilla usa "Hecho" por defecto → 119 párrafos con la misma palabra al inicio.
+- Ahora el chip **"Hecho" no se renderiza** (es la marca por defecto: la ausencia de chip ya lo comunica). Los chips **Inferencia** e **Hipótesis** se mantienen porque sí cambian la lectura del afirmación (regla del plan n.º 4 intacta).
+- La estructura de datos de párrafos (`label` en los dicts) no cambia: la IA y el validador siguen usando Hecho/Inferencia/Hipótesis; es solo presentación.
+- Regresión en `test_pdf_html_contains_required_parts`: sin `>Hecho</span>` y con Inferencia/Hipótesis presentes.
+- PDF regenerado en modo plantilla: 26 páginas, 126 enlaces, 321 KB (antes 345 KB).
+
+### Decisiones de este pulido
+- La IA (OpenRouter `openai/gpt-4o-mini`) solo redacta y pasa por el validador anti-alucinación; el PDF queda con plantilla si la IA no está configurada.
+- **Página objetivo 15–20**: actual 26 (la Quinta Versión tenía 23 pero pisaba el footer) — los anexos (evidencias y alias) ocupan ~6 páginas con los textos literales completos; si hay que recortar, los anexos son el único sitio (documentado, decisión pendiente del desarrollador).
+- La duda del scoring I-005 (bonus de incidentes: 75→85 por 3 fases kill chain) queda pendiente y documentada: sin cambio hasta decisión del desarrollador en la fase G.
+
 ## Pendientes inmediatos
 
-- Verificación manual de las fases A + B + C + D + E por el desarrollador (pasos abajo).
+- Verificación manual de las fases A + B + C + D + E + F + pulido del informe por el desarrollador (pasos abajo).
 - Aviso de build: el bundle de Vite supera 500 kB por Recharts; code-splitting queda para la fase G (rendimiento).
-- Si conviene, limpiar restos de `data/uploads/` de sesiones que murieron con la recarga del servidor (git-ignorado, sin riesgo de commit).
-- Al hacer commit (lo hace el desarrollador): sugerencia de mensaje → `fase E: plantillas deterministas, adaptadores IA y validador anti-alucinacion`.
+- Decisión pendiente del desarrollador: si los 26 páginas (vs objetivo 15–20) se recortan en anexos o se queda así, y si el bonus I-005 (+10 por fases kill chain, 75→85) se ajusta o se mantiene (paso de F sin tocar).
+- Al hacer commit (lo hace el desarrollador): sugerencia de mensaje → `fase F + ajustes IA por UI: informe completo, PDF, exportaciones y ajustes de IA en memoria`.
 
 ## Cómo ejecutar y probar
 
 - Arrancar todo: `.\start.ps1` (backend http://127.0.0.1:8000 · frontend http://127.0.0.1:5173).
-- Tests: `.\test.ps1` → 112 tests verdes (24 fase A + 34 detección/API + 19 correlación/fase C + 10 dashboard/fase D + 25 IA/fase E).
-- API docs: http://127.0.0.1:8000/docs (endpoints `/api/detection/rules`, `/api/sessions/{id}/findings`, `/api/sessions/{id}/coverage`, `/api/sessions/{id}/incidents`, `POST /api/sessions/{id}/overrides`, `/api/sessions/{id}/stats`, `/api/ai/settings`, `POST /api/ai/test`, `POST|GET /api/sessions/{id}/narrative`; `/events` admite `time_from`/`time_to`).
+- Tests: `.\test.ps1` → 150 tests verdes (24 fase A + 35 detección/API + 21 correlación/fase C + 10 dashboard/fase D + 25 IA/fase E + 23 informe/fase F pulido + 8 ajustes IA por UI post-F + 6 parser LLM robusto + 2 regresión pool validador; ajustes de cuenta del pulido del informe).
+- API docs: http://127.0.0.1:8000/docs (endpoints `/api/detection/rules`, `/api/sessions/{id}/findings`, `/api/sessions/{id}/coverage`, `/api/sessions/{id}/incidents`, `POST /api/sessions/{id}/overrides`, `/api/sessions/{id}/stats`, `/api/ai/settings`, `POST /api/ai/test`, `POST|GET /api/sessions/{id}/narrative`; fase F: `GET /api/sessions/{id}/report`, `PUT /api/sessions/{id}/report/meta`, `PUT /api/sessions/{id}/report/sections/{section_id}`, `POST .../report/sections/{section_id}/regenerate`, `GET /api/sessions/{id}/report/pdf`, `GET /api/sessions/{id}/exports/iocs.csv`, `GET /api/sessions/{id}/exports/findings.json`; `/events` admite `time_from`/`time_to`).
 
 ## Recordatorios
 
 - Regla de oro: todo hallazgo debe tener evidencia con `Log_ID`; si no, frase exacta: "No hay evidencia en los logs proporcionados."
 - La IA no detecta (implementado en fase E): solo redacta a partir de hallazgos deterministas y su salida se valida; el chat llega en F2.
 - Commits/push los hace el desarrollador; agentes solo git de lectura.
+
+## Fase F — qué quedó hecho
+
+### Backend
+- **`reporting/report.py`** (informe completo, PLAN §9): construye de forma determinista **14 secciones numeradas + 3 anexos** (58 secciones con el Excel de ejemplo: 1 portada + resumen + metodología + tabla resumen + 37 hallazgos + 6 incidentes + evidencias + timeline/MITRE + criticidad + impacto + plan de acción + IoCs + recomendaciones + limitaciones + anexos de calidad/cobertura/alias). Cada sección lleva `number`, `section_id`, `title`, `kind`, `paragraphs` (Hecho/Inferencia/Hipótesis con citas), `tables` (con columnas y filas de datos reales) y `edited/edited_at`. Los párrafos de resumen/hallazgos/incidentes provienen de la redacción de la fase E (`result.narrative`) si existe, o de las plantillas deterministas. Regla de oro: secciones sin datos usan la frase exacta "No hay evidencia en los logs proporcionados." Tablas derivadas solo de datos: portada (datos del caso), resumen de hallazgos (ID, regla, severidad, score, banda, MITRE, entidades), evidencias (Log_ID + **texto literal de la fila** reconstruido de `raw.fields` con los nombres de columna), timeline de incidentes, técnicas MITRE, criticidad de hallazgos/incidentes con factores y overrides, IoCs por incidente, anexos de calidad (métricas + nulos por columna), cobertura y alias.
+- **Edición de secciones**: `parse_section_text()` convierte el texto del analista en párrafos etiquetados (una línea por párrafo; prefijos opcionales `Hecho:`/`Inferencia:`/`Hipótesis:`, sin prefijo = Hecho; `source: manual`). `apply_section_edit()` valida sección conocida (404 si no), no vacía, ≤20.000 caracteres y ≤50 párrafos, y guarda la edición en `AnalysisResult.report_edits` (nuevo campo, en memoria como el resto). `build_report()` aplica las ediciones sobre la base. `regenerate_section()` elimina la edición y devuelve la sección base exacta (plantilla/narrativa).
+- **`reporting/pdf.py`**: HTML A4 con Jinja2 (**autoescape activado**; la evidencia siempre es texto escapado, sin HTML crudo) con portada (título + tabla de datos del caso), índice de todas las secciones numeradas, chips de etiqueta Hecho/Inferencia/Hipótesis con colores, citas de evidencia por párrafo y tablas con estilo. El PDF se imprime con **Playwright sync API + Chromium local en caché** (chromium-1234 ya instalado, sin descargas en tiempo de ejecución): `format="A4"`, `display_header_footer` con pie "SOC L2 SIEM Analyzer — Página X de Y" (**numeración de páginas**). Errores de render → HTTP 500 con mensaje claro en español (sin trazas internas).
+- **`reporting/exports.py`**: `sanitize_csv_cell()` añade prefijo `'` a celdas que empiezan por `=`, `+`, `-`, `@`, tab o CR (PLAN §11, anti-inyección de fórmulas); `iocs_csv()` agrega los IoCs de todos los incidentes (tipo, valor, incidentes donde aparece, ordenado determinista) y `findings_json()` vuelca los hallazgos del motor con overrides aplicados y sin texto de redacción.
+- **`api/routes_report.py`** (nuevo router, tags "report"):
+  - `GET /api/sessions/{id}/report` — informe completo con ediciones aplicadas (404 sin sesión/sin análisis).
+  - `PUT /api/sessions/{id}/report/sections/{section_id}` — edita una sección (texto → párrafos etiquetados).
+  - `POST /api/sessions/{id}/report/sections/{section_id}/regenerate` — restaura el contenido base.
+  - `GET /api/sessions/{id}/report/pdf` — genera el PDF en `data/exports/<uuid>.pdf` (git-ignorada) y lo devuelve como descarga con nombre `informe_<archivo>_<hoja>.pdf`; **BackgroundTask borra el temporal justo después de enviarlo** (borrado tras procesar, PLAN §11).
+  - `GET /api/sessions/{id}/exports/iocs.csv` y `GET .../exports/findings.json` — descargas con `Content-Disposition` y BOM UTF-8 en el CSV (apertura correcta en Excel).
+- **`main.py`**: router registrado; health y versión pasan a fase F.
+
+### Frontend (`frontend/src`)
+- **Pestaña nueva "Informe"** (`components/ReportPanel.tsx`), entre Hallazgos y Redacción:
+  - Cabecera con nº de secciones, fecha de generación y **tres botones de descarga**: PDF (con estado "Generando PDF…"), IoCs CSV y Hallazgos JSON (descarga vía blob + `Content-Disposition`; el nombre de archivo lo propone el backend).
+  - Buscador de secciones por título o id; secciones plegables numeradas con badge de "editada" (fecha/hora) y contador de tablas/filas.
+  - Cada párrafo muestra su etiqueta (Hecho/Inferencia/Hipótesis con colores coherentes con la fase E), su origen (`plantilla` / `IA validada` / `manual`) y citas `Log_ID` clickeables que abren la fila cruda en Eventos.
+  - Tablas renderizadas de los datos del informe; los `Log_ID` de la tabla de evidencias y de la columna de evidencia del timeline son clickeables.
+  - **Editar sección**: textarea con una línea por párrafo (prefijos de etiqueta documentados en la UI); Guardar/Cancelar. **Regenerar** (visible solo en secciones editadas) restaura la plantilla sin recargar la página.
+- `api.ts`: `getReport`, `editReportSection`, `regenerateReportSection`, `downloadReportPdf`, `downloadIocsCsv`, `downloadFindingsJson` (helper `downloadBlob` reutilizable). `types.ts`: `ReportResponse`, `ReportSection`, `ReportParagraph`, `ReportTable`. `App.tsx`: pestaña "Informe" añadida a la navegación.
+
+## Validación fase F (18 tests nuevos; suite completa: 130 verdes)
+
+- Estructura: las secciones fijas del PLAN §9 existen, numeración consecutiva 1..N, toda sección con título y ≥1 párrafo; una sección por hallazgo y por incidente; la tabla resumen coincide con el motor (mismo nº de filas, mismos IDs, `evidence` == `len(evidence_log_ids)`).
+- Evidencias: la tabla `evidencias` contiene exactamente los `Log_ID` citados por todos los hallazgos, con texto literal `columna=valor`.
+- IoCs: cada fila de la sección/tabla procede de los `iocs` de su incidente; sin IoCs → frase obligatoria y sin tablas.
+- Sin hallazgos: el informe usa la frase exacta en resumen e impacto (construcción directa de `AnalysisResult` vacío).
+- Edición: etiquetas parseadas (Hecho/Inferencia/Hipótesis + sin prefijo = Hecho, `source: manual`); PUT edita, GET refleja `edited=True` y `edited_at`; POST regenerar restaura el texto base exacto; validaciones 400 (vacía, >20.000 chars) y 404 (sección inexistente, en PUT y regenerar).
+- PDF: el HTML contiene portada, índice, tablas, `Log_ID` y evidencia literal, sin `<script`; render real con Chromium devuelve `application/pdf`, firma `%PDF-`, >100 kB y **el temporal se borra** tras enviarlo (BackgroundTask verificado en tests); endpoints PDF/informe → 404 sin sesión o sin análisis.
+- Exportaciones: `sanitize_csv_cell` neutraliza `=`/`+`/`-`/`@`; el CSV lleva cabecera `tipo,valor,incidentes` y todas sus filas proceden de los IoCs del análisis; el JSON del motor tiene el mismo nº de hallazgos que la API, evidencia idéntica y refleja un override recién creado (sin párrafos de redacción).
+
+## Decisiones tomadas (fase F)
+
+- El informe se construye **siempre determinista** desde los datos estructurados; la única prosa que incorpora es la redacción validada de la fase E (plantillas o IA validada). Las secciones nuevas (metodología, impacto, plan de acción, recomendaciones, limitaciones) salen de agregados factuales o plantillas genéricas por categoría, nunca de señales del ejemplo.
+- El "plan de acción" usa acciones genéricas por categoría de regla (autenticación, ejecución, persistencia…) con "Responsable: por asignar / Plazo: por asignar": es una plantilla editable por el analista, no una afirmación del motor.
+- La numeración de páginas vive en el pie del PDF (Playwright `pageNumber/totalPages`); el índice lista las secciones numeradas (el número de página exacto de cada sección en el índice HTML es inviable con Chromium sin doble pasada; queda documentado así).
+- Las ediciones del analista se guardan en memoria (`AnalysisResult.report_edits`), coherente con la sesión en memoria del PLAN; regenerar elimina la edición y vuelve al contenido base. El texto editado se guarda como párrafos etiquetados, no como HTML.
+- El PDF se genera bajo demanda y se borra justo después de la descarga (BackgroundTask): `data/exports/` no acumula informes; la carpeta es git-ignorada.
+- El CSV usa `utf-8-sig` (BOM) para que Excel respete el UTF-8, y `sanitize_csv_cell` protege contra inyección de fórmulas antes de escribir cualquier celda.
+- Ocurrió durante la fase: `start.ps1` dejó uvicorns huérfanos de una sesión anterior (respondían "fase E" en el 8000 y bloqueaban el nuevo). Si al arrancar el health no muestra `"fase":"F"`, matar los `python.exe` de uvicorn residuales y relanzar.
 
 ## Fase A — qué quedó hecho
 

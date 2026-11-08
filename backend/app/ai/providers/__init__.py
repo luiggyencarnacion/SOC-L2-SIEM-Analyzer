@@ -1,5 +1,8 @@
 # ai/providers/ - Adaptadores REST por proveedor (fase E).
-# Sin SDKs: peticiones httpx directas. Sin claves en el codigo (vienen de .env).
+# Sin SDKs: peticiones httpx directas. Sin claves en el codigo (vienen de .env o
+# de los ajustes en RAM de la UI).
+import re
+
 from app.ai.base import AIProviderError, BaseAdapter, require_model
 from app.ai.settings import _OLLAMA_DEFAULT_BASE
 
@@ -7,7 +10,7 @@ from app.ai.settings import _OLLAMA_DEFAULT_BASE
 class OpenAICompatibleAdapter(BaseAdapter):
     """Cualquier API compatible OpenAI (LM Studio, vLLM, Azure-style, etc.)."""
 
-    name = "openai_compatible"
+    name: str = "openai_compatible"
 
     def _base(self) -> str:
         base = (getattr(self.settings, "base_url", "") or "").rstrip("/")
@@ -27,33 +30,52 @@ class OpenAICompatibleAdapter(BaseAdapter):
         self._request("GET", f"{self._base()}/models", headers=self._headers())
         return {"ok": True, "detail": "Conexion correcta con el endpoint compatible OpenAI."}
 
+    def _body(self, model: str, system: str, user: str) -> dict:
+        return {
+            "model": model,
+            "temperature": self.settings.temperature,
+            "max_tokens": self.settings.max_output_tokens,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        }
+
     def generate(self, system: str, user: str) -> str:
         model = require_model(self.settings)
         resp = self._request(
             "POST",
             f"{self._base()}/chat/completions",
             headers=self._headers(),
-            json={
-                "model": model,
-                "temperature": self.settings.temperature,
-                "max_tokens": self.settings.max_output_tokens,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-            },
+            json=self._body(model, system, user),
         )
         data = resp.json()
         try:
-            return str(data["choices"][0]["message"]["content"])
+            message = data["choices"][0]["message"]
         except (KeyError, IndexError, TypeError) as exc:
             raise AIProviderError(
                 "La respuesta del endpoint compatible OpenAI no tiene el formato esperado."
             ) from exc
+        content = str(message.get("content") or "")
+        # Algunos modelos (GLM, DeepSeek, Qwen) incrustan el razonamiento en el propio
+        # content dentro de bloques <think ...>...</think: se elimina antes de validar.
+        content = re.sub(r"<think[^>]*>.*?</think\s*>", "", content, flags=re.DOTALL | re.IGNORECASE)
+        # Si el bloque quedo abierto (respuesta truncada a mitad del razonamiento).
+        content = re.sub(r"<think[^>]*>.*$", "", content, flags=re.DOTALL | re.IGNORECASE)
+        content = content.strip()
+        if not content:
+            reasoning = message.get("reasoning") or message.get("reasoning_content") or ""
+            raise AIProviderError(
+                "El modelo no devolvio contenido final: probablemente agoto el presupuesto de "
+                "tokens en el modo razonamiento o solo devolvio 'reasoning'. Usa un modelo de "
+                "chat sin razonamiento o sube AI_MAX_OUTPUT_TOKENS."
+                + (f" (reasoning recibido: {len(str(reasoning))} caracteres)." if reasoning else "")
+            )
+        return content
 
 
 class AnthropicAdapter(BaseAdapter):
-    name = "anthropic"
+    name: str = "anthropic"
 
     BASE = "https://api.anthropic.com"
 
@@ -102,7 +124,7 @@ class AnthropicAdapter(BaseAdapter):
 
 
 class GeminiAdapter(BaseAdapter):
-    name = "gemini"
+    name: str = "gemini"
 
     BASE = "https://generativelanguage.googleapis.com"
 
@@ -141,7 +163,7 @@ class GeminiAdapter(BaseAdapter):
 
 
 class OllamaAdapter(BaseAdapter):
-    name = "ollama"
+    name: str = "ollama"
 
     def _base(self) -> str:
         return (getattr(self.settings, "base_url", "") or _OLLAMA_DEFAULT_BASE).rstrip("/")
@@ -194,4 +216,8 @@ def get_adapter(provider: str, settings, transport=None) -> BaseAdapter:
     cls = _ADAPTERS.get(provider)
     if cls is None:
         raise AIProviderError(f"Proveedor de IA no soportado: '{provider}'.")
-    return cls(settings=settings, _transport=transport)
+    adapter = cls(settings=settings, _transport=transport)
+    # El __init__ de BaseAdapter pone name="" (default del campo de la dataclass);
+    # los adaptadores definen su nombre como atributo de clase, no como campo.
+    adapter.name = provider
+    return adapter

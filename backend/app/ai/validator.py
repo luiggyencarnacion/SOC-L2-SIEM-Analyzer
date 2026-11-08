@@ -63,16 +63,20 @@ def context_from_pool(section_id: str, events: List[Dict[str, Any]], session_log
         lid = str(ev.get("log_id") or "")
         if lid:
             allowed_log_ids.add(lid)
-        t = normalize_time(ev.get("timestamp_parsed") or ev.get("timestamp_raw"))
+        t = normalize_time(ev.get("timestamp_parsed") or ev.get("timestamp_raw") or ev.get("timestamp"))
         if t:
             allowed_times.add(t)
         # Cifras verificables: numeros presentes en los valores de la fila.
         for value in list(ev.values()):
             for num in _NUM_RE.findall(str(value or "")):
                 allowed_numbers.add(num)
-        # Entidades de la fila (usuarios, hosts, IPs, destinos).
+        # Entidades de la fila (usuarios, hosts, IPs, destinos). Las filas de
+        # evidencia llegan con claves de visualizacion (usuario/host/ip_origen...)
+        # y algunos flujos con claves normalizadas (user_raw/host_raw...): se
+        # aceptan ambos nombres.
         for key in ("user_raw", "host_raw", "source_ip", "destination_raw",
-                    "destination_host", "destination_ip", "url_path", "share", "file_path"):
+                    "destination_host", "destination_ip", "url_path", "share", "file_path",
+                    "usuario", "host", "ip_origen", "url", "ruta"):
             _collect_entities(ev.get(key), allowed_entities)
     for n in derived_numbers or []:
         allowed_numbers.add(str(abs(n)))
@@ -142,16 +146,41 @@ def _check_text_facts(text: str, ctx: SectionContext) -> Optional[str]:
 
 
 def parse_llm_payload(raw: str) -> List[Dict[str, Any]]:
-    """Extrae la lista de parrafos del JSON del LLM (tolera vallas ```json)."""
+    """Extrae la lista de parrafos del JSON del LLM.
+
+    Tolerante al formato real de los LLM: vallas ```json con o sin texto
+    introductorio/final, y espacios en blanco. Si el JSON parece truncado
+    (p. ej. se acabo el presupuesto de tokens), el motivo lo indica.
+    """
     text = str(raw or "").strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
-        text = re.sub(r"\s*```$", "", text).strip()
-    data = json.loads(text)
+    # 1) Intento directo (JSON puro).
+    data = _try_json(text)
+    # 2) Vallas de codigo: ```json ... ``` en cualquier posicion del texto.
+    if data is None:
+        fence = re.search(r"```[a-zA-Z]*\s*(\{.*?\})\s*```", text, re.DOTALL)
+        if fence:
+            data = _try_json(fence.group(1))
+    # 3) Objeto mas externo: desde el primer '{' hasta el ultimo '}'.
+    if data is None:
+        start, end = text.find("{"), text.rfind("}")
+        if start != -1 and end > start:
+            data = _try_json(text[start : end + 1])
+    if data is None:
+        if text and "{" in text and "}" not in text[text.find("{") :]:
+            raise ValueError("la respuesta del LLM parece truncada (JSON incompleto); "
+                             "sube AI_MAX_OUTPUT_TOKENS o reduce el modelo")
+        raise ValueError("la respuesta del LLM no contiene JSON valido")
     paragraphs = data.get("paragraphs") if isinstance(data, dict) else None
     if not isinstance(paragraphs, list):
         raise ValueError("falta la lista 'paragraphs'")
     return [p for p in paragraphs if isinstance(p, dict)]
+
+
+def _try_json(text: str):
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return None
 
 
 def validate_paragraphs(
@@ -170,7 +199,7 @@ def validate_paragraphs(
     try:
         items = parse_llm_payload(raw)
     except Exception as exc:  # JSON invalido: se descarta todo y se usa plantilla.
-        reason = f"Respuesta no valida para el validador ({exc.__class__.__name__})."
+        reason = f"Respuesta no valida para el validador ({exc.__class__.__name__}: {exc})."
         return [], [{"section": "*", "reason": reason}]
 
     for item in items:

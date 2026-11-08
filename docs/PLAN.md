@@ -277,6 +277,12 @@ Anexo: calidad de datos, cobertura, alias inferidos y discrepancias de severidad
 - `AI_PROVIDER=none | gemini | anthropic | openai_compatible | ollama`; por defecto `none`.
 - Sin modelo fijo en código; `AI_MODEL` obligatorio para activar IA.
 - Claves solo en `.env` del backend; la UI las recibe/muestra nunca.
+  - **Actualización post-F (decisión del desarrollador):** la clave y los ajustes
+    (proveedor, modelo, base URL, temperatura) pueden introducirse desde la UI.
+    Se guardan **únicamente en memoria del proceso del backend**: nunca se
+    persisten en disco ni en el repositorio, nunca se devuelven por la API (solo
+    el estado `key_configured`) y se pierden al reiniciar el backend. El `.env`
+    sigue admitido; el override de la UI tiene prioridad.
 - Pantalla de ajustes: proveedor, modelo, base URL, estado de clave y prueba de conexión.
 - Anti-alucinación independiente del proveedor:
   - Solo se envían hallazgos estructurados y filas de evidencia.

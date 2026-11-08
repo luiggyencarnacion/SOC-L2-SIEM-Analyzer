@@ -33,6 +33,10 @@ class AnalysisResult:
     narrative: Optional[Dict[str, Any]] = None
     # Override manual (fase C): "finding:F-001" / "incident:I-002" -> clasificacion + motivo.
     overrides: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    # Ediciones del analista por sección del informe (fase F): section_id -> edit.
+    report_edits: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    # Datos editables de la portada del informe (pulido fase F).
+    report_meta: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
